@@ -1,0 +1,37 @@
+{
+  "planetaryradius": {
+    "name": "Planetary radius",
+    "unit": "Jupiter radii"
+  },
+  "albedo": {
+    "name": "albedo",
+    "unit": "dimensionless"
+  },
+  "redistribution": {
+    "name": "redistribution",
+    "unit": "dimensionless"
+  },
+  "inclination": {
+    "name": "inclination",
+    "unit": "degrees"
+  },
+  "albedo_min": {
+    "name": "albedo_min",
+    "unit": "dimensionless"
+  },
+  "cloud_offset": {
+    "name": "cloud_offset",
+    "unit": "dimensionless"
+  },
+  "flux": "Normalized flux as a function of the phase angle",
+  "author": "A. Dyrek",
+  "date_created": "2025-11-14T12:50:47.420760",
+  "description": "Precomputed 3D model grid phase-curve normalised flux with phase-offset.",
+  "fixed_parameters": {
+    "target name": "KIC 9139163",
+    "period": "0.604734 day",
+    "wavelength range": "[0.43 0.89] micron (Kepler Bandpass)",
+    "phase discretisation": "100 values (in degrees)",
+    "Planetary mass * sini": "0.035859612 Jupiter mass * sini"
+  }
+}
