@@ -53,7 +53,7 @@ if fit_gravitational_effects is True and add_gravitational_effects_model is True
 
 main_path = '/Users/adyrek/PycharmProjects/punto/'
 references_path = os.path.join(main_path, 'references')
-model_grid_folder = os.path.join(main_path, 'results_grid/model_grid/phase_offset')
+model_grid_folder = os.path.join(main_path, 'results_grid/model_grid/phase_offset_smaller')
 main_result_folder= os.path.join(main_path, 'results_grid/ultranest/fit_fixed_i')
 if fit_gravitational_effects is True:
     result_folder = os.path.join(main_result_folder, 'phase_offset/fitted_grav_params')
@@ -170,7 +170,6 @@ if inclination is None:
     print("Inclination will be fitted.")
     grid_axes = (planetaryradius, albedo, redistribution, inclination_grid,
                  albedo_min, cloud_offset)
-    interpolator_flux = normalized_flux
     fixed_incl_val = None
 
 else:
@@ -180,11 +179,11 @@ else:
           f"nearest grid incl = {fixed_incl_val:.2f} degrees (index {nearest_idx})")
 
     # slice away inclination axis
-    interpolator_flux = normalized_flux[:, :, :, nearest_idx, :, :, :]
+    normalized_flux = normalized_flux[:, :, :, nearest_idx, :, :]
     grid_axes = (planetaryradius, albedo, redistribution, albedo_min, cloud_offset)
 
 model_interpolator = RegularGridInterpolator(
-    grid_axes, interpolator_flux, bounds_error=False, fill_value=None
+    grid_axes, normalized_flux, bounds_error=False, fill_value=None
 )
 
 print("Grid interpolator parameter axes:")
