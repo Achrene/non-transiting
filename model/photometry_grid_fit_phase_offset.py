@@ -11,6 +11,7 @@ import ultranest
 from ultranest.stepsampler import SliceSampler, generate_region_oriented_direction
 import sys
 import utils
+from pathlib import Path
 
 import cmocean as cm
 
@@ -51,10 +52,10 @@ if fit_gravitational_effects is True and add_gravitational_effects_model is True
     print("We can't fit and fix the gravitational effects at the same time. Turn one of them to False.")
     sys.exit()
 
-main_path = '/Users/adyrek/PycharmProjects/punto/'
-references_path = os.path.join(main_path, 'references')
-model_grid_folder = os.path.join(main_path, 'results_grid/model_grid/phase_offset_smaller')
-main_result_folder= os.path.join(main_path, 'results_grid/ultranest/fit_fixed_i')
+ROOT = Path(__file__).resolve().parent
+references_path = str(ROOT / "references")
+model_grid_folder =  str(ROOT / "results_grid"/ "model_grid" / "phase_offset_smaller")
+main_result_folder= str(ROOT / "results_grid"/ "ultranest" / "fit_fixed_i")
 if fit_gravitational_effects is True:
     result_folder = os.path.join(main_result_folder, 'phase_offset/fitted_grav_params')
 else:
@@ -215,12 +216,6 @@ foldx, foldy = utils.phase_fold(time_array, y, period, ref_time)
 # modify observation phase array: foldx to get it in phase between 0-360
 phase_obs = ((foldx + 0.5 * period) / period) * 360
 
-# interpolate over radius, albedo, redistribution, inclination, albedo_min and phase_offset
-model_interpolator = RegularGridInterpolator((planetaryradius, albedo, redistribution, inclination, albedo_min,
-                                              cloud_offset),
-                                             normalized_flux,
-                                             bounds_error=False,
-                                             fill_value=None)
 
 def compute_gravity_amplitudes(inc_deg):
     alpha_ellip = -2.2e-4 * effectivetemperature + 2.6

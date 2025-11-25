@@ -8,6 +8,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 from contextlib import contextmanager
 from datetime import datetime
+from pathlib import Path
 
 import cmocean as cm
 
@@ -40,8 +41,10 @@ def tqdm_joblib(tqdm_object):
         tqdm_object.close()
 
 
-references_path = '/Users/adyrek/PycharmProjects/punto/references'
-model_grid_folder = '/Users/adyrek/PycharmProjects/punto/results_grid/model_grid/phase_offset'
+
+ROOT = Path(__file__).resolve().parent
+references_path = str(ROOT / "references")
+model_grid_folder = str(ROOT / "results_grid" / "model_grid" / "phase_offset")
 model_name = 'model_grid_phase_offset'
 
 Kepler = True

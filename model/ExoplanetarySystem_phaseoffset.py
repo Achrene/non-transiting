@@ -9,10 +9,15 @@ from mpl_toolkits.basemap import Basemap
 import cmocean as cm
 from matplotlib.patches import Circle
 from matplotlib.legend_handler import HandlerPatch
+from pathlib import Path
+import os
 
 colors_matter = cm.cm.matter_r(np.linspace(0, 1, 10))
 
 test = False
+
+ROOT = Path(__file__).resolve().parent
+references_path = str(ROOT / "references")
 
 
 class ExoplanetarySystem_phaseoffset:
@@ -54,7 +59,7 @@ class ExoplanetarySystem_phaseoffset:
 
     def read_response_function(self):
         if self.mission == 'Kepler':
-            response_function_file = '/Users/adyrek/PycharmProjects/punto/references/Kepler_Response_Function.txt'
+            response_function_file = os.path.join(references_path, 'Kepler_Response_Function.txt')
             response_fonction_data = np.loadtxt(response_function_file, skiprows = 8)
             response_function_values = response_fonction_data[:, 1]
             response_function_wavelength = response_fonction_data[:, 0] * 10**(-3)  # converted into microns
@@ -634,8 +639,8 @@ if test:
     def run_model():
         #  inputs
         planetaryradius = 0.3  # Jup radius
-        albedo = 0.99
-        albedo_min = 0.1
+        albedo = 0.5
+        albedo_min = 0.5
         redistribution = 0.95
 
         targetname = '9139163'
