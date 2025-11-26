@@ -190,7 +190,6 @@ if inclination is None:
     if not use_uniform_albedo:
         param_list['albedo_min'] = albedo_min
         param_list['cloud_offset'] = cloud_offset
-        grid_axes = tuple(param_list.values())
         fixed_incl_val = None
 else:
     nearest_idx = np.nanargmin(np.abs(inclination_grid - inclination))
@@ -206,7 +205,8 @@ else:
     if not use_uniform_albedo:
         param_list['albedo_min'] = albedo_min
         param_list['cloud_offset'] = cloud_offset
-        grid_axes = tuple(param_list.values())
+
+grid_axes = tuple(param_list.values())
 
 model_interpolator = RegularGridInterpolator(
     grid_axes, normalized_flux, bounds_error=False, fill_value=None
