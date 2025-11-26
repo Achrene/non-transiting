@@ -59,10 +59,10 @@ model_grid_folder =  str(ROOT.parent / "results_grid"/ "model_grid" / "phase_off
 main_result_folder= str(ROOT.parent / "results_grid"/ "ultranest" / "fit_fixed_i")
 
 if fit_gravitational_effects is True:
-    result_folder = os.path.join(main_result_folder, str(fit_name / 'fitted_grav_params'))
+    result_folder = os.path.join(main_result_folder, fit_name, 'fitted_grav_params')
 else:
     if add_gravitational_effects_model is True:
-        result_folder = os.path.join(main_result_folder, str(fit_name / 'fixed_grav_params'))
+        result_folder = os.path.join(main_result_folder, fit_name, 'fixed_grav_params')
     else:
         result_folder = os.path.join(main_result_folder, fit_name)
 
