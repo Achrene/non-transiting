@@ -28,7 +28,6 @@ rc('mathtext', fontset = 'cm')
 
 colors_matter = cm.cm.matter_r(np.linspace(0,3,10))
 
-
 #  inputs
 targetname = '9139163'
 period = 0.604734  # in days
