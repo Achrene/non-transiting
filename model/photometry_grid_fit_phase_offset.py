@@ -55,7 +55,7 @@ if fit_gravitational_effects is True and add_gravitational_effects_model is True
 
 ROOT = Path(__file__).resolve().parent
 references_path = str(ROOT.parent / "references")
-model_grid_folder =  str(ROOT.parent / "results_grid"/ "model_grid" / "phase_offset_smaller")
+model_grid_folder =  str(ROOT.parent / "results_grid"/ "model_grid" / "phase_offset")
 main_result_folder= str(ROOT.parent / "results_grid"/ "ultranest" / "fit_fixed_i")
 
 if fit_gravitational_effects is True:
