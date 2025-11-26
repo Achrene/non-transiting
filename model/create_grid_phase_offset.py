@@ -43,8 +43,8 @@ def tqdm_joblib(tqdm_object):
 
 
 ROOT = Path(__file__).resolve().parent
-references_path = str(ROOT / "references")
-model_grid_folder = str(ROOT / "results_grid" / "model_grid" / "phase_offset")
+references_path = str(ROOT.parent / "references")
+model_grid_folder = str(ROOT.parent / "results_grid" / "model_grid" / "phase_offset")
 model_name = 'model_grid_phase_offset'
 
 Kepler = True
