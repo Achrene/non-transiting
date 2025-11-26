@@ -181,15 +181,14 @@ print("\nModel grid - inclination handling")
 if inclination is None:
     print("Inclination will be fitted.")
     param_list = {
-    'planetaryradius': planetaryradius,
-    'albedo': albedo,
-    'redistribution': redistribution,
-    'inclination': inclination_grid,
-    'cloud_offset': cloud_offset
+    'Planetary Radius': planetaryradius,
+    'Albedo': albedo,
+    'Redistribution': redistribution,
+    'Inclination': inclination_grid,
     }
     if not use_uniform_albedo:
-        param_list['albedo_min'] = albedo_min
-        param_list['cloud_offset'] = cloud_offset
+        param_list['Albedo min'] = albedo_min
+        param_list['Cloud offset'] = cloud_offset
         fixed_incl_val = None
 else:
     nearest_idx = np.nanargmin(np.abs(inclination_grid - inclination))
@@ -198,13 +197,13 @@ else:
           f"{fixed_incl_val:.2f} (idx {nearest_idx})")
     normalized_flux = normalized_flux[:, :, :, nearest_idx, :, :]
     param_list = {
-    'planetaryradius': planetaryradius,
-    'albedo': albedo,
-    'redistribution': redistribution,
+    'Planetary Radius': planetaryradius,
+    'Albedo': albedo,
+    'Redistribution': redistribution,
     }
     if not use_uniform_albedo:
-        param_list['albedo_min'] = albedo_min
-        param_list['cloud_offset'] = cloud_offset
+        param_list['Albedo min'] = albedo_min
+        param_list['Cloud offset'] = cloud_offset
 
 grid_axes = tuple(param_list.values())
 
