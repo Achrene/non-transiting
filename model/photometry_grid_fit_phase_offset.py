@@ -294,7 +294,7 @@ def make_model_flux_function(model_interpolator, phase_model, phase_obs, fit_gra
                     full_params.append(fixed_incl_val)
             elif np.array_equal(ax, albedo_min):
                 if use_uniform_albedo:
-                    full_params.append(fitted_dict["Albedo"])
+                    continue
                 else:
                     full_params.append(fitted_dict["Albedo min"])
             elif np.array_equal(ax, cloud_offset):
