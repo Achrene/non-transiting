@@ -178,22 +178,35 @@ else:
     pass
 
 print("\nModel grid - inclination handling")
-
 if inclination is None:
     print("Inclination will be fitted.")
-    grid_axes = (planetaryradius, albedo, redistribution, inclination_grid,
-                 albedo_min, cloud_offset)
-    fixed_incl_val = None
-
+    param_list = {
+    'planetaryradius': planetaryradius,
+    'albedo': albedo,
+    'redistribution': redistribution,
+    'inclination': inclination_grid,
+    'cloud_offset': cloud_offset
+    }
+    if not use_uniform_albedo:
+        param_list['albedo_min'] = albedo_min
+        param_list['cloud_offset'] = cloud_offset
+        grid_axes = tuple(param_list.values())
+        fixed_incl_val = None
 else:
     nearest_idx = np.nanargmin(np.abs(inclination_grid - inclination))
     fixed_incl_val = float(inclination_grid[nearest_idx])
-    print(f"Requested inclination = {inclination:.2f} degrees -> "
-          f"nearest grid incl = {fixed_incl_val:.2f} degrees (index {nearest_idx})")
-
-    # slice away inclination axis
+    print(f"Requested inclination = {inclination:.2f} deg -> nearest grid incl = "
+          f"{fixed_incl_val:.2f} (idx {nearest_idx})")
     normalized_flux = normalized_flux[:, :, :, nearest_idx, :, :]
-    grid_axes = (planetaryradius, albedo, redistribution, albedo_min, cloud_offset)
+    param_list = {
+    'planetaryradius': planetaryradius,
+    'albedo': albedo,
+    'redistribution': redistribution,
+    }
+    if not use_uniform_albedo:
+        param_list['albedo_min'] = albedo_min
+        param_list['cloud_offset'] = cloud_offset
+        grid_axes = tuple(param_list.values())
 
 model_interpolator = RegularGridInterpolator(
     grid_axes, normalized_flux, bounds_error=False, fill_value=None
@@ -257,13 +270,13 @@ def make_model_flux_function(model_interpolator, phase_model, phase_obs, fit_gra
 
     def get_model_flux(p):
         fitted_dict = dict(zip(param_names, p))
+        amplitude_offset = fitted_dict.get("Amplitude Offset", 0.0)
+        phase_obs_local = phase_obs
 
         if fit_gravitational_effects:
             Aellip = fitted_dict.get("Aellip", None)
             Abeam = fitted_dict.get("Abeam", None)
-            amplitude_offset = fitted_dict.get("Amplitude Offset", 0.0)
         else:
-            amplitude_offset = fitted_dict.get("Amplitude Offset", 0.0)
             Aellip = None
             Abeam = None
 
@@ -271,13 +284,10 @@ def make_model_flux_function(model_interpolator, phase_model, phase_obs, fit_gra
             phase_offset_days = fitted_dict.get("Phase Offset (days)", 0.0)
             phase_shift_deg = 360.0 * (phase_offset_days / period)
             phase_obs_local = (phase_obs + phase_shift_deg) % 360.0
-        else:
-            phase_obs_local = phase_obs
 
         # Precompute sinusoidal terms (since phase_obs is fixed)
         cos_term = np.cos(4 * np.pi * phase_obs_local / 360)
         sin_term = np.sin(2 * np.pi * phase_obs_local / 360.0)
-
 
         full_params = []
         for ax in grid_axes:
@@ -351,59 +361,24 @@ os.makedirs(ultranest_output, exist_ok=True)
 if perform_fit is True:
     print("'perform_fit' is True: performing fit using UltraNest Nested Sampling.")
 
-    abel_map = {
-        'planetaryradius': "Planetary Radius",
-        'albedo': "Albedo",
-        'redistribution': "Redistribution",
-        'inclination': "Inclination",
-        'albedo_min': "Albedo min",
-        'cloud_offset': "Cloud offset",
-    }
-
     param_names = []
     param_bounds = []
 
-    for ax in grid_axes:
-        if np.array_equal(ax, planetaryradius):
-            param_names.append("Planetary Radius")
-            param_bounds.append((planetaryradius.min(), planetaryradius.max()))
-        elif np.array_equal(ax, albedo):
-            param_names.append("Albedo")
-            param_bounds.append((albedo.min(), albedo.max()))
-        elif np.array_equal(ax, redistribution):
-            param_names.append("Redistribution")
-            param_bounds.append((redistribution.min(), redistribution.max()))
-        elif np.array_equal(ax, inclination_grid):
-            param_names.append("Inclination")
-            param_bounds.append((inclination_grid.min(), inclination_grid.max()))
-        elif np.array_equal(ax, albedo_min):
-            if use_uniform_albedo:
-                print("Skipping 'Albedo min' as a free parameter because it equals 'Albedo'.")
-                continue
-            param_names.append("Albedo min")
-            param_bounds.append((albedo_min.min(), albedo_min.max()))
-        elif np.array_equal(ax, cloud_offset):
-            if use_uniform_albedo:
-                continue
-            param_names.append("Cloud offset")
-            param_bounds.append((cloud_offset.min(), cloud_offset.max()))
-        else:
-            raise RuntimeError("Unrecognized parameter axis.")
+    for name, ax in param_list.items():
+        param_names.append(name.replace('_', ' ').title())
+        param_bounds.append((ax.min(), ax.max()))
 
-    # adding flux offset
-    param_names.append("Amplitude Offset")
-    param_bounds.append((-5 * np.mean(yerr), 5 * np.mean(yerr)))
+        param_names.append("Amplitude Offset")
+        param_bounds.append((-5 * np.mean(yerr), 5 * np.mean(yerr)))
 
-    # adding phase offset
-    if use_uniform_albedo:
-        param_names.append("Phase Offset (days)")
-        param_bounds.append((-0.1, 0.1))
+        if use_uniform_albedo:
+            param_names.append("Phase Offset (days)")
+            param_bounds.append((-0.1, 0.1))
 
-    # gravitational effect params (if fitted)
-    if fit_gravitational_effects:
-        param_names = param_names[:-1] + ["Abeam", "Aellip", "Amplitude Offset"]
-        param_bounds = param_bounds[:-1] + [(1e-2, 500), (-500, 500),
-                                            (-5 * np.mean(yerr), 5 * np.mean(yerr))]
+        if fit_gravitational_effects:
+            param_names = param_names[:-1] + ["Abeam", "Aellip"]
+            param_bounds = param_bounds[:-1] + [(1e-2, 500), (-500, 500)]
+
 
     def make_prior_transform(param_names, param_bounds):
         def prior_transform(unit_cube):
