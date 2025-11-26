@@ -3,14 +3,6 @@ import os
 import astropy.constants as c
 import pandas as pd
 
-def find_nearest(value, array):
-    print('TBD')
-    wave_value = value
-    ind_value = np.where(wave_value)
-
-    return wave_value, ind_value
-
-
 def convert_deg_to_radian(x):
     return x * (np.pi/180)
 
