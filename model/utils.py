@@ -23,7 +23,7 @@ def phase_fold(x, y, period, t0):
 
     df = df.sort_values(by='p').reset_index(drop=True)
 
-    df = df.groupby(df['p'].index).mean()
+    #df = df.groupby(df['p'].index).mean()
 
     return df['p'], df['f']
 

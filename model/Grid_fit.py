@@ -12,11 +12,15 @@ import utils
 from pathlib import Path
 import yaml
 from types import SimpleNamespace
-from scipy.stats import norm
 from dataclasses import dataclass
 import sys
 import os
 import pandas as pd
+from scipy.optimize import least_squares
+from numpy.linalg import inv
+import matplotlib.patheffects as pe
+import matplotlib.lines as lines
+import matplotlib.patches as mpatches
 
 import cmocean as cm
 
@@ -45,7 +49,9 @@ class FitConfiguration:
     stellarradius: float
     target: str
     planetarymasssini: float
+    fitting_method: str
     yerr: Optional[np.ndarray] = None
+
 
 
     def validate(self):
@@ -64,7 +70,7 @@ class Priors:
         # grid parameters
         for name, axis_values in grid_axes.items():
             # Skip albedo_min and cloud_offset if uniform albedo
-            if config.use_uniform_albedo and name in ["Albedo min", "Cloud offset"]:
+            if config.use_uniform_albedo and name in ["Albedo min"]:
                 continue
             # Skip inclination if fixed
             if name == "Inclination" and not config.fit_inclination:
@@ -72,6 +78,7 @@ class Priors:
 
             self.names.append(name)
             self.bounds.append((axis_values.min(), axis_values.max()))
+        
 
         # Extra nuisance parameters
         self.names.append("Amplitude Offset")
@@ -79,32 +86,34 @@ class Priors:
 
         # Delta T0 only in uniform-albedo mode
         if config.use_uniform_albedo:
-            self.names.append("Delta T0 (days)")
-            self.bounds.append((-0.1, 0.1))
+             self.names.append("Delta phase (deg)")
+             self.bounds.append((-54, 54)) # degrees, comes from 0.15 phase uncertainty on the RV time of sup. conj.
 
         # Gravitational amplitudes (free or fixed)
         if config.fit_gravitational_effects:
             self.names += ["Abeam", "Aellip"]
             self.bounds += [(1e-2, 500), (-500, 500)]
 
+        #self.names += ["log jitter"]
+        #self.bounds += [(-4, 6)]
 
     def prior_transform(self, u):
         values = []
 
         for ui, (low, high), name in zip(u, self.bounds, self.names):
 
-            # Log-scale for grav amplitudes
-            if name in ["Abeam", "Aellip"]:
-                val = 10 ** (np.log10(low) + ui * (np.log10(high) - np.log10(low)))
+            # Log-scale for jitter
+            #if name in ["jitter"]:
+                #val = 10 ** (np.log10(low) + ui * (np.log10(high) - np.log10(low)))
 
             # Gaussian prior for T0 offset (centered at T0)
-            elif name == "Delta T0 (days)":
-                val = norm.ppf(ui, loc=0.0, scale=5 * 0.018)
-                val = np.clip(val, low, high)
+            #elif name == "Delta T0 (days)":
+            #    val = norm.ppf(ui, loc=0.0, scale=5 * 0.018)
+            #    val = np.clip(val, low, high)
 
             # Linear priors
-            else:
-                val = low + ui * (high - low)
+
+            val = low + ui * (high - low)
 
             values.append(val)
 
@@ -123,18 +132,18 @@ class PhotometryModel:
         alpha_ellip = -2.2e-4 * self.config.effectivetemperature + 2.6
         alpha_beam = -6e-4 * self.config.effectivetemperature + 7.2
         inc_rad = np.deg2rad(inclination)
-        self.config.planetarymasssini = self.config.planetarymasssini * 0.00314558  # conversion to Jupiter mass
+        mass_jup = self.config.planetarymasssini * 0.00314558  # conversion to Jupiter mass
 
         Aellip = (13 * alpha_ellip * np.sin(inc_rad) *
-                  self.config.stellarradius ** 3 *
-                  self.config.stellarmass ** (-2) *
-                  self.config.period ** (-2) *
-                  self.config.planetarymasssini)
+                    self.config.stellarradius ** 3 *
+                    self.config.stellarmass ** (-2) *
+                    self.config.period ** (-2) *
+                    mass_jup)
 
         Abeam = (2.7 * alpha_beam *
-                 self.config.period ** (-1 / 3) *
-                 self.config.stellarmass ** (-2 / 3) *
-                 self.config.planetarymasssini)
+                    self.config.period ** (-1 / 3) *
+                    self.config.stellarmass ** (-2 / 3) *
+                    mass_jup)
         return Aellip, Abeam
 
     def flux(self, p, phase_obs):
@@ -154,27 +163,35 @@ class PhotometryModel:
                 interp_point.append(incl)
             elif axis_name in parameters:
                 interp_point.append(parameters[axis_name])
-            elif self.config.use_uniform_albedo and axis_name in ["Albedo min", "Cloud offset"]:
+            elif self.config.use_uniform_albedo and axis_name in ["Albedo min"]:
                 continue  # skip
             else:
                 raise RuntimeError(f"Axis {axis_name} missing from parameters")
 
         interp_point = np.array([interp_point])
 
+
+
         # Interpolate planetary flux
         base_flux = self.interpolator(interp_point).squeeze()
+        # Avoid having Nans returned when asked for a point outside the grid.
+        if np.isnan(base_flux).any():
+            # return something that gives extremely low loglike (bad point)
+            return np.full_like(phase_obs, 1e6)  # huge mismatch = very low likelihood
 
-        # Shift phase (uniform albedo case only)
+
+
+        # Apply T0 shift phase
         if self.config.use_uniform_albedo:
-            dT0 = parameters["Delta T0 (days)"]
-            shift = dT0 / self.config.period * 360
-            phase_obs = (phase_obs + shift) % 360
+             dT0 = parameters["Delta phase (deg)"]
+             phase_obs = (phase_obs + dT0) % 360
 
         # Interpolate to observation phases
         f = np.interp(phase_obs, self.phase_model, base_flux)
 
         # Add amplitude offset
         f += parameters["Amplitude Offset"]
+
 
         # Add gravitational effects
         if self.config.fit_gravitational_effects:
@@ -189,7 +206,7 @@ class PhotometryModel:
 
         return f
 
-def run_fit(config: FitConfiguration,
+def run_fit_least_square(config: FitConfiguration,
             grid_axes,
             interpolator,
             phase_model,
@@ -205,11 +222,86 @@ def run_fit(config: FitConfiguration,
 
     print(f"Number of parameters: {len(param_space.names)}")
 
+
+    def residuals(p, foldy, yerr, phase_obs):
+        m = model.flux(p, phase_obs)
+        m = np.squeeze(m)
+        return (foldy - m) / yerr
+
+    random_x0 = np.zeros(len(param_space.names))
+    bounds_min = []
+    bounds_max = []
+    # do the fit
+    rng = np.random.default_rng()
+    for i, b in enumerate(param_space.bounds):
+        bounds_min.append(b[0])
+        bounds_max.append(b[1])
+
+        random_x0[i] = rng.uniform(low=b[0], high=b[1])
+
+    bounds = [np.asarray(bounds_min), np.asarray(bounds_max)]
+
+    res = least_squares(residuals, random_x0, bounds=bounds,
+                    args=(foldy, yerr, phase_obs))
+
+    #  get the best parameters
+    best = res.x
+    best_model = model.flux(best, phase_obs)
+
+    # get the confidence intervals
+    def confidence_intervals(result):
+        J = result.jac
+        residual_var = np.sum(result.fun ** 2) / (len(result.fun) - len(result.x))
+        cov = residual_var * inv(J.T @ J)
+        sigmas = np.sqrt(np.diag(cov))
+
+        return sigmas, cov
+
+    sigmas, cov = confidence_intervals(res)
+
+    print("\nBest-fit parameters:")
+    for i, name in enumerate(param_space.names):
+        print(f'{name} ± 1σ = {best[i]:.3f} ± {sigmas[i]:.3f}')
+
+
+    np.savez_compressed(
+        build_output_filename(output_folder, "fit_results.npz"),
+        param_names=np.array(param_space.names),
+        param_bounds= np.array(param_space.bounds),
+        best_params=best,
+        best_model=best_model,
+        sigmas=sigmas,
+    )
+
+    return best, best_model, sigmas, param_space.names, param_space.bounds
+
+
+def run_fit_ultranest(config: FitConfiguration,
+            grid_axes,
+            interpolator,
+            phase_model,
+            foldx, foldy, phase_obs, yerr,
+            output_folder):
+
+    config.validate()
+
+    # Build model + param space
+    model = PhotometryModel(config, interpolator, grid_axes, phase_model)
+    param_space = Priors(config, grid_axes)
+    model.param_space = param_space
+
+    print(f"Number of parameters: {len(param_space.names)}")
+    # Quick test for Nans in the code. If Nans, needs fixing.
+    us = np.random.rand(len(param_space.names))
+    print("prior transform test:", param_space.prior_transform(us))
+    print("any NaN in prior transform?", np.isnan(param_space.prior_transform(us)).any())
+
     # Log-likelihood
     def loglike(p):
         m = model.flux(p, phase_obs)
-        r = (foldy - m) / yerr
-        ll = -0.5 * np.sum(r * r + np.log(2 * np.pi * yerr * yerr))
+        sigma = yerr
+        r = (foldy - m) / sigma
+        ll = -0.5 * np.sum(r * r + np.log(2 * np.pi * sigma**2))
         return ll
 
     #sampler = ultranest.ReactiveNestedSampler(
@@ -225,8 +317,7 @@ def run_fit(config: FitConfiguration,
         loglike,
         param_space.prior_transform,
         log_dir=str(output_folder / "ultranest"),
-        resume='overwrite',
-        num_live_points=2000
+        num_live_points=400
     )
 
     sampler.stepsampler = SliceSampler(
@@ -242,7 +333,7 @@ def run_fit(config: FitConfiguration,
     #)
 
     result = sampler.run(
-        max_iters=10000,
+        max_iters=100000,
         dlogz=0.5,
     )
 
@@ -258,6 +349,7 @@ def run_fit(config: FitConfiguration,
     np.savez_compressed(
         build_output_filename(output_folder, "fit_results.npz"),
         param_names=np.array(param_space.names),
+        param_bounds= np.array(param_space.bounds),
         best_params=best,
         sigmas=sigma,
         samples=samples,
@@ -271,7 +363,7 @@ def run_fit(config: FitConfiguration,
     fig.savefig(build_output_filename(output_folder,"corner.png"), dpi=250)
     plt.close(fig)
 
-    return best, sigma, best_model, samples
+    return (best, sigma, best_model, samples, param_space.names, param_space.bounds)
 
 def load_model_grid(grid_folder, grid_filename):
     """
@@ -316,17 +408,27 @@ def build_output_folder(config: FitConfiguration, model_name: str, root_out: Pat
     else:
         grav_label = "gravity_none"
 
+    if config.fitting_method == 'LS':
+        method = 'LS'
+    elif config.fitting_method == 'NS':
+        method = 'NS'
+
     # Target
     target_label = f"target{config.target}"
+    # t0_name = 't05sigma'
+    # t0_name = 't0'
 
-    folder_name = "__".join([target_label, inc_label, alb_label, grav_label])
+    folder_name = "__".join([target_label, inc_label, alb_label, grav_label, method])
 
     out_folder = root_out / folder_name
 
     # If exists → stop
     existed = out_folder.exists()
     # Create directories
-    (out_folder / "ultranest").mkdir(parents=True, exist_ok=True)
+    if config.fitting_method == 'NS':
+        (out_folder / "ultranest").mkdir(parents=True, exist_ok=True)
+    else:
+        out_folder.mkdir(parents=True, exist_ok=True)
 
     return out_folder, existed
 
@@ -335,36 +437,67 @@ def build_output_filename(base_folder: Path, base_name: str):
     Use the folder name as a prefix for all output files.
     """
     prefix = base_folder.name
-    return base_folder / f"{prefix}__{base_name}"
+    return base_folder / f"{prefix}_{base_name}"
 
-def plot_fit(foldx, foldy, phase_obs, yerr, phase_model, best_model, out):
+def plot_fit(foldx, time_array, foldy, phase_obs, yerr, phase_model, best_model, out):
     resi = best_model - foldy
     binsize = 50
 
     bres, _ = utils.bin_data(resi, binsize)
     btime, _ = utils.bin_data(phase_obs, binsize)
     bflux, berr = utils.bin_data(foldy, binsize, err=yerr)
+    bin_time = utils.compute_binning_time(time_array, binsize)
 
-    fig, ax = plt.subplots(2, 1, figsize=(7, 6),
-                           gridspec_kw={'height_ratios': [3, 1]},
-                           sharex=True)
+    fig, ax = plt.subplots(2, 1, figsize=(7, 6), gridspec_kw={'height_ratios': [3, 1]}, sharex=True, dpi=100)
+    ax[0].plot(phase_obs / 360, best_model, color='deepskyblue', linewidth=3, zorder=3, alpha=1)  #colors_matter[3]
+    ax[0].errorbar(phase_obs / 360, foldy, yerr=yerr, linestyle=' ', fmt='.',
+                   color='lightgrey', zorder=1,
+                   alpha=0.1)
+    ax[0].errorbar(btime / 360, bflux, yerr=berr, linestyle=' ', fmt='o', markersize=5,
+                   markerfacecolor=colors_matter[1], markeredgecolor='black', markeredgewidth=0.3, zorder=2,
+                   alpha=1)
+    ax[0].set_ylabel('Normalised lightcurve [ppm]')
+    ax[0].axvline(0.5, linestyle='--', linewidth=1.5, color='grey')
+    ax[0].text(0.52, -90, s='Time of inferior \n conjunction', fontfamily='sans-serif', color='grey', fontsize=12)
+    #full_data_label = lines.Line2D([], [], color='lightgrey',
+                                   #markersize=5, marker='.', label='full data')
+    fit_label = lines.Line2D([], [], color='deepskyblue',
+                             linewidth=2, label=f'best-fit model'
+    )
+    #fit_label = mpatches.Rectangle((40, 90), 10, 10,edgecolor='black', facecolor=colors_matter[3], linewidth=1, label=f'best fit model')
+    binned_data_label = lines.Line2D([], [], marker='o', markersize=6,
+                                     markerfacecolor=colors_matter[1],
+                                     markeredgecolor='black', markeredgewidth=0.5, linestyle=' ',
+                                     label=f'{binsize}-point binning')
+    ax[0].legend(handles=[fit_label, binned_data_label], ncols=2,
+                prop={'family': 'sans-serif', 'size':12}, labelcolor='black', loc="upper right",
+                frameon=False)  #facecolor='darkblue', framealpha=0.5
+    ax[0].set_xlim(0, 1)
+    ax[0].set_ylim(-100, 100)
+    ax[0].tick_params(axis="both", which="both", direction="in", top=True, right=True)
+    ax[0].tick_params(which="major", length=8, width=1.4, labelsize=16)
+    ax[0].tick_params(which="minor", length=4, width=1.0)
+    ax[0].minorticks_on()
 
-    ax[0].plot(phase_obs / 360, best_model, color=colors_matter[3], lw=1.3, zorder=100)
-    ax[0].errorbar(phase_obs / 360, foldy, yerr=yerr, fmt='.', color='lightgrey', alpha=0.5, zorder=-500)
-    ax[0].errorbar(btime / 360, bflux, yerr=berr, fmt='.', color=colors_matter[1], zorder=50)
-
-    ax[0].set_ylabel("Normalized flux [ppm]")
-
-    ax[1].scatter(phase_obs / 360, resi, s=8, color="lightgrey", alpha=0.5)
-    ax[1].scatter(btime / 360, bres, s=8, color=colors_matter[1])
-    ax[1].axhline(0, color=colors_matter[3], lw=1)
-
-    ax[1].set_xlabel("Orbital phase")
-    ax[1].set_ylabel("Residuals [ppm]")
-
+    ax[1].scatter(phase_obs / 360, resi,
+                  alpha=0.1, color='lightgrey', s=8, marker='o')
+    ax[1].scatter(btime / 360, bres,
+                  alpha=1, c=colors_matter[1], edgecolors = 'black', linewidths = 0.3, s=18, marker='o')
+    ax[1].axhline(y=0, xmin=0, xmax=360, linewidth=2.5, color='deepskyblue')
+    ax[1].axvline(0.5, linestyle='--', linewidth=1.5, color='grey')
+    ax[1].set_xlabel('Orbital phase')  # Time [day]
+    ax[1].set_ylabel('Residuals [ppm]')
+    ax[1].set_xlim(0, 1)
+    ax[1].set_ylim(-100, 100)
+    ax[1].tick_params(axis="both", which="both", direction="in", top=True, right=True)
+    ax[1].tick_params(which="major", length=8, width=1.4, labelsize=16)
+    ax[1].tick_params(which="minor", length=4, width=1.0)
+    ax[1].minorticks_on()
     plt.tight_layout()
-    plt.savefig(build_output_filename(out,"fit.png"), dpi=250)
-    plt.close(fig)
+    plt.savefig(os.path.join(out, f'best_fit_inc.png'), format='png', dpi=300,
+                bbox_inches='tight')
+    plt.show()
+
 
 def load_parfile(parfile_path):
     with open(parfile_path, "r") as f:
@@ -413,7 +546,9 @@ def try_load_previous_fit(out_folder):
         data["best_params"],
         data["sigmas"],
         data["best_model"],
-        data["samples"]
+        data["samples"],
+        data["param_names"],
+        data["param_bounds"],
     )
 
 
@@ -421,7 +556,7 @@ def main():
     ROOT = Path(__file__).resolve().parent
     if path_exists(ROOT.parent / "model"/ "fit_parameters.yaml"):
         parfile_path = ROOT.parent / "model" / "fit_parameters.yaml"
-        print('I am here')
+
     else:
         print(f"Cannot locate 'fit_parameters.yaml' parfile in {ROOT.parent}")
         sys.exit()
@@ -444,7 +579,8 @@ def main():
         stellarmass=cfg.stellar.mass,
         stellarradius=cfg.stellar.radius,
         planetarymasssini=cfg.target.planetarymasssini,
-        target=cfg.target.name
+        target=cfg.target.name,
+        fitting_method = cfg.fitting.fitting_method
     )
     # Load grid
     grid_folder = ROOT.parent / cfg.model.folder
@@ -470,17 +606,34 @@ def main():
     # Drop unused inclinations
     normalized_flux = grid["flux"]
 
+    print(f'Inclination values in the grid: {grid_axes["Inclination"]}')
+
     if not config.fit_inclination:
         incl = config.fixed_inclination
         idx = np.nanargmin(np.abs(grid_axes["Inclination"] - incl))
-        normalized_flux = normalized_flux[:, :, :, idx:idx+1, 0, :]
+        # removing inclination and albedo_min from normalized flux to allow interpolation
+        if config.use_uniform_albedo:
+            normalized_flux = normalized_flux[:, :, :, idx, 0, :, :]
+        else:
+            normalized_flux = normalized_flux[:, :, :, idx, :, :, :]
         grid_axes.pop("Inclination")
-        grid_axes.pop("Cloud offset")
+        #grid_axes.pop("Cloud offset")
+    else:
+        if config.use_uniform_albedo:
+            normalized_flux = normalized_flux[:, :, :, :, 0, :, :]
+        else:
+            normalized_flux = normalized_flux[:, :, :, :, :, :, :]
 
-    print(grid_axes)
+    print("normalized_flux.shape before:", normalized_flux.shape)
+    for k,v in grid_axes.items():
+        print(k, len(v))
+    # After slicing:
+    print("normalized_flux.shape after:", normalized_flux.shape)
+    #assert normalized_flux.ndim == len(grid_axes) - (0 if config.fit_inclination else 1), "Dimension mismatch"
+    
     interpolator = RegularGridInterpolator(
         tuple(grid_axes.values()), normalized_flux,
-        bounds_error=False, fill_value=None
+        bounds_error=False, fill_value=np.nan
     )
 
     # Load photometry data
@@ -493,12 +646,13 @@ def main():
     time_array, y = data[:, 0], data[:, 1]
 
     # Phase-fold data
-    t0_RV = cfg.data.t0_RV
-    t0_Kepler = cfg.data.t0_photometry
-    ref_time = t0_RV - t0_Kepler
+    tsup_RV = cfg.data.tsup_RV # time of superior conjunction
+    t0_Kepler = cfg.data.t0_photometry # first time stamps in Kepler time array
+    time_abs = time_array + t0_Kepler
 
-    foldx, foldy = utils.phase_fold(time_array, y, config.period, ref_time)
-    phase_obs = ((foldx + 0.5 * config.period) / config.period) * 360
+    foldx, foldy = utils.phase_fold(time_abs, y, config.period, tsup_RV)
+
+    phase_obs = ((time_array - tsup_RV) / config.period % 1.0) * 360
 
     # Uncertainties
     ref_table = pd.read_csv(os.path.join(references_path,  "t0_estimation.csv"))
@@ -512,27 +666,55 @@ def main():
         print("\nFit directory already exists — attempting to load stored results.")
         loaded = try_load_previous_fit(out_folder)
         if loaded is not None:
-            best, sigma, best_model, samples = loaded
+            best, sigma, best_model, samples, param_name, param_bounds = loaded
             print("Loaded previous fit. Skipping UltraNest.")
-
         else:
             print("Folder exists, but no previous fit file found. Continuing with fresh fit.")
 
-            # Run fit
-            best, sigma, best_model, samples = run_fit(
-                config,
-                grid_axes,
-                interpolator,
-                phase_model,
-                foldx, foldy, phase_obs, yerr,
-                output_folder=out_folder
-            )
+            if cfg.fitting.fitting_method == 'LS':
+                print('Fitting method is Least Square.')
+                best, best_model, sigmas, param_name, param_bounds = run_fit_least_square(config, grid_axes,
+                                                                                  interpolator, phase_model,
+                                                                                  foldx, foldy, phase_obs,
+                                                                                  yerr,
+                                                                                  output_folder=out_folder)
 
-    # Plot fit
-    plot_fit(foldx, foldy, phase_obs, yerr, phase_model, best_model, out_folder)
+            elif cfg.fitting.fitting_method == 'NS':
+                print('Fitting method is Nested Sampling.')
+                best, sigma, best_model, samples, param_name, param_bounds = run_fit_ultranest(config, grid_axes,
+                                            interpolator, phase_model,
+                                            foldx, foldy, phase_obs,
+                                            yerr,
+                                            output_folder=out_folder)
+            else:
+                print('Fitting method is not recognized. Please change it.')
+                sys.exit()
+
+    else:
+        if cfg.fitting.fitting_method == 'LS':
+            print('Fitting method is Least Square.')
+            best, best_model, sigmas, param_name, param_bounds = run_fit_least_square(config, grid_axes,
+                                                                              interpolator, phase_model,
+                                                                              foldx, foldy, phase_obs,
+                                                                              yerr,
+                                                                              output_folder=out_folder)
+
+        elif cfg.fitting.fitting_method == 'NS':
+            print('Fitting method is Nested Sampling.')
+            best, sigma, best_model, samples, param_name, param_bounds = run_fit_ultranest(config, grid_axes,
+                                                                                           interpolator, phase_model,
+                                                                                           foldx, foldy, phase_obs,
+                                                                                           yerr,
+                                                                                           output_folder=out_folder)
+        else:
+            print('Fitting method is not recognized. Please change it.')
+            sys.exit()
+
+    plot_fit(foldx, time_array, foldy, phase_obs, yerr, phase_model, best_model, out_folder)
 
     saved_parfile = save_parfile_to_output(parfile_path, out_folder)
     print(f"Stored parfile at: {saved_parfile}")
+
 
 if __name__ == "__main__":
     main()

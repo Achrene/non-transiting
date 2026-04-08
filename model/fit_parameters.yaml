@@ -19,11 +19,11 @@ stellar:
 # -------------------------
 model:
   folder: "results_model/phase_offset"
-  filename: "model_grid_phase_offset_uniform_albedo"
+  filename: "model_grid_phase_offset_cloud_offset"
 
 data:
   filename: "9139163_lc_filtered.txt"
-  t0_RV: 2459664.752  # BJD_TDB
+  tsup_RV: 2459664.752 # BJD_TDB
   t0_photometry: 2454953.5394706232  # BJD_TDB
 
 
@@ -31,11 +31,12 @@ data:
 # Fitting options
 # -------------------------
 fitting:
+  fitting_method: "LS" # Least square "LS" or Nested Sampling "NS"
   use_uniform_albedo: true  # reflection will be centered on phase 0.5
 
   # Inclination options
   fit_inclination: false
-  fixed_inclination: 62  # degrees
+  fixed_inclination: 62 # 17 28.25 39.5  50.75 62. degrees
 
   # Gravity options
   fit_gravitational_effects: false  # Gravitational effects (Doppler beaming, Ellipsoidal distortion) are fitted
