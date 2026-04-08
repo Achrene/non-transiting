@@ -1,0 +1,48 @@
+# -------------------------
+# Target information
+# -------------------------
+target:
+  name: "9139163"
+  period: 0.604734  # days
+  planetarymasssini: 11.4  # Earth masses
+
+# -------------------------
+# Stellar parameters
+# -------------------------
+stellar:
+  teff: 6358  # K
+  mass: 1.390  # Solar mass
+  radius: 1.558  # Solar radii
+
+# -------------------------
+# Model grid being used
+# -------------------------
+model:
+  folder: "results_model/phase_offset"
+  filename: "model_grid_phase_offset_uniform_albedo"
+
+data:
+  filename: "9139163_lc_filtered.txt"
+  t0_RV: 2459664.752  # BJD_TDB
+  t0_photometry: 2454953.5394706232  # BJD_TDB
+
+
+# -------------------------
+# Fitting options
+# -------------------------
+fitting:
+  use_uniform_albedo: true  # reflection will be centered on phase 0.5
+
+  # Inclination options
+  fit_inclination: false
+  fixed_inclination: 62  # degrees
+
+  # Gravity options
+  fit_gravitational_effects: false  # Gravitational effects (Doppler beaming, Ellipsoidal distortion) are fitted
+  add_gravitational_model: true  # or added
+
+# -------------------------
+# Output options
+# -------------------------
+output:
+  root_folder: "fit"

@@ -1,0 +1,514 @@
+import numpy as  np
+import os
+from scipy.interpolate import RegularGridInterpolator
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.interpolate import interp1d
+import matplotlib.lines as lines
+import json
+import corner
+import ultranest
+from ultranest.stepsampler import SliceSampler, generate_region_oriented_direction
+import sys
+import utils
+from pathlib import Path
+from scipy.stats import norm
+
+import cmocean as cm
+
+from matplotlib import rc
+rc('image', origin='lower')
+rc('font', **{'family': 'serif', 'serif': ['Times New Roman'], 'size': 16})
+rc('text', usetex=False)
+rc('lines', linewidth=0.5)
+rc('ytick', right=True, direction = 'in')
+rc('xtick', top = True, direction = 'in')
+rc('axes', axisbelow = False)
+rc('mathtext', fontset = 'cm')
+
+colors_matter = cm.cm.matter_r(np.linspace(0,3,10))
+
+#  inputs
+targetname = '9139163'
+period = 0.604734  # in days
+nphase = 100  # discretization of phases
+phase_model = np.linspace(0, 360., nphase)
+wavearray = np.array([0.430, 0.890])  # Kepler bandpass in micron
+planetarymasssini = 11.4  # Earth mass, from RV fit
+planetarymasssini = planetarymasssini * 0.00314558  # conversion into Jupiter mass
+inclination = 17  # degrees
+# inclination = None
+model_name = f'model_grid_phase_offset_uniform_albedo'
+fit_name = f"phase_offset_uniform_albedo"
+effectivetemperature = 6358
+stellarmass = 1.390
+stellarradius = 1.558
+
+plot_grid = False
+perform_fit = True
+fit_gravitational_effects = False
+add_gravitational_effects_model = True
+
+if fit_gravitational_effects is True and add_gravitational_effects_model is True:
+    print("We can't fit and fix the gravitational effects at the same time. Turn one of them to False.")
+    sys.exit()
+
+ROOT = Path(__file__).resolve().parent
+references_path = str(ROOT.parent / "references")
+model_grid_folder =  str(ROOT.parent / "results_grid"/ "model_grid" / "phase_offset")
+main_result_folder= str(ROOT.parent / "results_grid"/ "ultranest" / "fit_fixed_i")
+
+if fit_gravitational_effects is True:
+    result_folder = os.path.join(main_result_folder, fit_name, 'fitted_grav_params')
+else:
+    if add_gravitational_effects_model is True:
+        result_folder = os.path.join(main_result_folder, fit_name, 'fixed_grav_params')
+    else:
+        result_folder = os.path.join(main_result_folder, fit_name)
+
+
+print("Reading the model grid.")
+# Load the saved grid
+model_grid = np.load(os.path.join(model_grid_folder, f"{model_name}.npz"))
+
+planetaryradius = model_grid["planetaryradius"]
+albedo = model_grid["albedo"]
+redistribution = model_grid["redistribution"]
+inclination_grid = model_grid["inclination"]
+inclination_grid = np.asarray(inclination_grid)
+albedo_min = model_grid["albedo_min"]
+albedo_min = np.asarray(albedo_min)
+cloud_offset = model_grid["cloud_offset"]
+cloud_offset = np.asarray(cloud_offset)
+normalized_flux = model_grid["flux"]
+
+if "uniform_albedo" in  model_name:
+    use_uniform_albedo = True
+    print("Detected uniform albedo in model's name. Will fit only 'Albedo' (albedo_min will track it).")
+else:
+    use_uniform_albedo = False
+    print("No uniform albedo detected in model's name: both 'Albedo' and "
+                                     "'Albedo min' will be available as fit parameters.")
+
+
+# load metadata
+with open(os.path.join(model_grid_folder, f"{model_name}.json"), "r") as f:
+    metadata = json.load(f)
+
+# Example: Access metadata
+print("Author:", metadata["author"])
+print("Date created:", metadata["date_created"])
+print("Fixed parameters:", metadata["fixed_parameters"])
+
+
+if plot_grid is True:
+    print("'plot_grid' is True: plotting the grid.")
+
+    def plot_photometry_model(normalized_flux, planetaryradius, albedo, redistribution,
+                              inclination_grid, albedo_min, cloud_offset):
+        fig, ax = plt.subplots(1, 1, figsize=(5, 4), dpi=100)
+        for angle in [0, 90, 180, 270, 360]:
+            ax.axvline(angle, -10, 70, color='lightgrey', linestyle='--', linewidth=0.7, zorder=1)
+
+        n_r, n_a, n_rcl, n_inc, n_amin, n_c, n_phase = normalized_flux.shape
+        total_curves = n_r * n_a * n_rcl * n_inc * n_amin * n_c
+
+        flux_reshaped = normalized_flux.reshape((total_curves, n_phase))
+        i_vals, j_vals, k_vals, l_vals, m_vals, n_vals = np.meshgrid(
+            np.arange(n_r),
+            np.arange(n_a),
+            np.arange(n_rcl),
+            np.arange(n_inc),
+            np.arange(n_amin),
+            np.arange(n_c),
+            indexing='ij'
+        )
+
+        i_flat = i_vals.flatten()
+        j_flat = j_vals.flatten()
+        k_flat = k_vals.flatten()
+        l_flat = l_vals.flatten()
+        m_flat = m_vals.flatten()
+        n_flat = n_vals.flatten()
+
+        # Loop over flattened index arrays
+        for idx in range(total_curves):
+            i, j, k, l, m, n = i_flat[idx], j_flat[idx], k_flat[idx], l_flat[idx], m_flat[idx], n_flat[idx]
+            flux_curve = flux_reshaped[idx]
+            if not np.all(np.isnan(flux_curve)):
+                ax.plot(
+                    phase_model,
+                    flux_curve,
+                    linewidth=2,
+                    linestyle='-',
+                    color=colors_matter[i]
+                )
+
+        # Axis formatting
+        xticks = [0, 90, 180, 270, 360]
+        xlabels = [f'{x}°' for x in xticks]
+        ax.set_xticks(xticks, labels=xlabels)
+        ax.set_xlabel(r'Phase [$^{\circ}$]')
+        ax.set_ylabel(r'Planet-star contrast $F_p / F_{\star} \times 10^6$ [ppm]')
+        legend_text = (
+            f"$R_\\mathrm{{p}}$ = [{np.min(planetaryradius):.2f}, {np.max(planetaryradius):.2f}] $R_\\mathrm{{J}}$\n"
+            f"A = [{np.min(albedo):.2f}, {np.max(albedo):.2f}]\n"
+            f"Redist. = [{np.min(redistribution):.2f}, {np.max(redistribution):.2f}]\n"
+            f"i. = [{np.min(inclination_grid):.2f}, {np.max(inclination_grid):.2f}]\n"
+            f"A min. = [{np.min(albedo_min):.2f}, {np.max(albedo_min):.2f}]\n"
+            f"dC. = [{np.min(cloud_offset):.2f}, {np.max(cloud_offset):.2f}]\n"
+            
+            f"Discretisation = [{n_r}, {n_a}, {n_rcl}, {n_inc}, {n_amin}, {n_c}]\n]"
+        )
+        ax.text(0.65, 0.98, legend_text,
+                transform=ax.transAxes,
+                fontsize=8,
+                verticalalignment='top',
+                horizontalalignment='left',
+                bbox=dict(boxstyle='round', facecolor='white', edgecolor='lightgrey'))
+        plt.tight_layout()
+        plt.savefig(os.path.join(model_grid_folder, f'{model_name}.png'),
+                    format='png', dpi=300, bbox_inches='tight')
+        plt.show()
+
+    plot_photometry_model(normalized_flux, planetaryradius, albedo, redistribution)
+
+else:
+    pass
+
+print("\nModel grid - inclination handling")
+if inclination is None:
+    print("Inclination will be fitted.")
+    param_list = {
+    'Planetary Radius': planetaryradius,
+    'Albedo': albedo,
+    'Redistribution': redistribution,
+    'Inclination': inclination_grid,
+    }
+    if not use_uniform_albedo:
+        param_list['Albedo min'] = albedo_min
+        param_list['Cloud offset'] = cloud_offset
+        fixed_incl_val = None
+else:
+    nearest_idx = np.nanargmin(np.abs(inclination_grid - inclination))
+    fixed_incl_val = float(inclination_grid[nearest_idx])
+    print(f"Requested inclination = {inclination:.2f} deg -> nearest grid incl = "
+          f"{fixed_incl_val:.2f} (idx {nearest_idx})")
+    normalized_flux = normalized_flux[:, :, :, nearest_idx, :, :]
+    param_list = {
+    'Planetary Radius': planetaryradius,
+    'Albedo': albedo,
+    'Redistribution': redistribution,
+    }
+    if not use_uniform_albedo:
+        param_list['Albedo min'] = albedo_min
+        param_list['Cloud offset'] = cloud_offset
+
+grid_axes = tuple(param_list.values())
+
+model_interpolator = RegularGridInterpolator(
+    grid_axes, normalized_flux, bounds_error=False, fill_value=None
+)
+
+print("Grid interpolator parameter axes:")
+for ax in grid_axes:
+    print("  -> axis length:", len(ax))
+
+
+# Open data
+input_file = os.path.join(references_path, '9139163_lc_filtered.txt')
+
+data = np.loadtxt(input_file)
+time_array = data[:, 0]
+y = data[:, 1]
+t0_RV = 2459664.752 #from the RV fit
+t0_Kepler = 2454953.5394706232
+ref_time = t0_RV - t0_Kepler
+
+# get the errorbars
+referencetimefiename = 't0_estimation.csv'
+referencetimedata = pd.read_csv(os.path.join(references_path, referencetimefiename))
+target =referencetimedata.loc[referencetimedata['KIC'] == int(targetname)]
+repetitions = len(time_array)
+yerr = np.repeat(np.asarray(target['noise_jenkins'])[0], repetitions)
+#  yerr = 1
+
+# Phase-fold
+foldx, foldy = utils.phase_fold(time_array, y, period, ref_time)
+
+# modify observation phase array: foldx to get it in phase between 0-360
+phase_obs = ((foldx + 0.5 * period) / period) * 360
+
+
+def compute_gravity_amplitudes(inc_deg):
+    alpha_ellip = -2.2e-4 * effectivetemperature + 2.6
+    alpha_beam  = -6e-4 * effectivetemperature + 7.2
+    inc_rad = np.deg2rad(inc_deg)
+
+    Aellip = 13 * alpha_ellip * np.sin(inc_rad) * stellarradius**3 * \
+             stellarmass**(-2) * period**(-2) * planetarymasssini
+    Abeam  = 2.7 * alpha_beam * period**(-1/3) * stellarmass**(-2/3) * planetarymasssini
+    return Aellip, Abeam
+
+# If inclination is fixed, compute once
+if inclination is not None:
+    Aellip_fixed, Abeam_fixed = compute_gravity_amplitudes(fixed_incl_val)
+else:
+    Aellip_fixed, Abeam_fixed = None, None
+
+print("\nGravitational effects")
+if inclination is not None:
+    print(f"Using fixed Aellip={Aellip_fixed:.3f}, Abeam={Abeam_fixed:.3f}")
+else:
+    print("Inclination is free -> Aellip/Abeam will depend on sampled inclination.")
+
+
+def make_model_flux_function(model_interpolator, phase_model, phase_obs, fit_gravitational_effects=False,
+                             add_gravitational_effects_model=False, fixed_incl_val=None):
+
+    def get_model_flux(p):
+        fitted_dict = dict(zip(param_names, p))
+        amplitude_offset = fitted_dict.get("Amplitude Offset", 0.0)
+        phase_obs_local = phase_obs
+
+        if fit_gravitational_effects:
+            Aellip = fitted_dict.get("Aellip", None)
+            Abeam = fitted_dict.get("Abeam", None)
+        else:
+            Aellip = None
+            Abeam = None
+
+        if use_uniform_albedo:
+            phase_offset_days = fitted_dict.get("Phase Offset (days)", 0.0)
+            phase_shift_deg = 360.0 * (phase_offset_days / period)
+            phase_obs_local = (phase_obs + phase_shift_deg) % 360.0
+
+        # Precompute sinusoidal terms (since phase_obs is fixed)
+        cos_term = np.cos(4 * np.pi * phase_obs_local / 360)
+        sin_term = np.sin(2 * np.pi * phase_obs_local / 360.0)
+
+        full_params = []
+        for ax in grid_axes:
+            if np.array_equal(ax, planetaryradius):
+                full_params.append(fitted_dict["Planetary Radius"])
+            elif np.array_equal(ax, albedo):
+                full_params.append(fitted_dict["Albedo"])
+            elif np.array_equal(ax, redistribution):
+                full_params.append(fitted_dict["Redistribution"])
+            elif np.array_equal(ax, inclination_grid):
+                if "Inclination" in fitted_dict:
+                    full_params.append(fitted_dict["Inclination"])
+                else:
+                    full_params.append(fixed_incl_val)
+            elif np.array_equal(ax, albedo_min):
+                if use_uniform_albedo:
+                    continue
+                else:
+                    full_params.append(fitted_dict["Albedo min"])
+            elif np.array_equal(ax, cloud_offset):
+                if use_uniform_albedo:
+                    continue
+                else:
+                    full_params.append(fitted_dict["Cloud offset"])
+            else:
+                raise RuntimeError("Unrecognized axis when building full_params")
+
+        if use_uniform_albedo:
+            full_params.append(fitted_dict.get("Phase Offset (days)", 0.0))
+
+        #  Interpolate base model flux
+        pts = np.atleast_2d(full_params)  # shape (1, ndim)
+        flux_grid_res = model_interpolator(pts)  # likely shape (1, n_phase)
+        flux_grid = np.squeeze(flux_grid_res)  # shape (n_phase,) guaranteed
+
+        flux_interp = interp1d(phase_model, flux_grid, kind='linear', bounds_error=False, fill_value="extrapolate")
+        flux_interp_squeeze = flux_interp(phase_obs_local)
+
+        flux = flux_interp_squeeze + amplitude_offset
+
+        # --- Add gravitational effects if needed ---
+        if fit_gravitational_effects:
+            flux -= Aellip * cos_term
+            flux += Abeam * sin_term
+
+        elif add_gravitational_effects_model:
+            if "Inclination" in fitted_dict:
+                inc_val = fitted_dict["Inclination"]
+            else:
+                inc_val = fixed_incl_val
+            Aellip_calc, Abeam_calc = compute_gravity_amplitudes(inc_val)
+            flux -= Aellip_calc * cos_term
+            flux += Abeam_calc * sin_term
+
+        return flux
+
+    return get_model_flux
+
+get_model_flux = make_model_flux_function(
+        model_interpolator,
+        phase_model,
+        phase_obs,
+        fit_gravitational_effects=fit_gravitational_effects,
+        add_gravitational_effects_model=add_gravitational_effects_model,
+        fixed_incl_val=fixed_incl_val
+    )
+
+ultranest_output = os.path.join(main_result_folder, f'ultranestoutput/i{inclination}')
+os.makedirs(ultranest_output, exist_ok=True)
+
+if perform_fit is True:
+    print("'perform_fit' is True: performing fit using UltraNest Nested Sampling.")
+
+    param_names = []
+    param_bounds = []
+
+    for name, ax in param_list.items():
+        param_names.append(name.replace('_', ' ').title())
+        param_bounds.append((ax.min(), ax.max()))
+
+        param_names.append("Amplitude Offset")
+        param_bounds.append((-5 * np.mean(yerr), 5 * np.mean(yerr)))
+
+        if use_uniform_albedo:
+            param_names.append("Phase Offset (days)")
+            param_bounds.append((-0.1, 0.1))
+
+        if fit_gravitational_effects:
+            param_names = param_names[:-1] + ["Abeam", "Aellip"]
+            param_bounds = param_bounds[:-1] + [(1e-2, 500), (-500, 500)]
+
+
+    def make_prior_transform(param_names, param_bounds):
+        def prior_transform(unit_cube):
+            params = []
+            for i, u  in enumerate(unit_cube):
+                low, high = param_bounds[i]
+                name = param_names[i]
+                if name in ["Abeam", "Aellip"]:
+                    # Log-scale these to improve sampling stability
+                    val = 10 ** (np.log10(max(low, 1e-8)) + u[i] * (np.log10(max(high, 1e-8))
+                                                                    - np.log10(max(low, 1e-8))))
+                elif name == "Phase Offset (days)":
+                    # Gaussian prior centered on 0 with sigma=0.018 days
+                    val = norm.ppf(u, loc=0.0, scale=0.018)
+                    val = np.clip(val, low, high)
+                else:
+                    val = low + u * (high - low)
+                val = np.clip(val, low, high)
+                params.append(val)
+            return np.array(params)
+        return prior_transform
+
+
+    def log_likelihood(p):
+        model_flux = get_model_flux(p)
+        residuals = (foldy - model_flux) / np.clip(yerr, 1e-12, np.inf)
+
+        loglike = -0.5 * np.sum(residuals ** 2 + np.log(2 * np.pi * yerr ** 2))
+        if np.isnan(loglike) or np.isinf(loglike):
+            return -1e300
+        return loglike
+
+    prior_transform = make_prior_transform(param_names, param_bounds)
+    sampler = ultranest.ReactiveNestedSampler(param_names, log_likelihood, prior_transform, log_dir=ultranest_output)
+
+    # Assign a step-based sampler to improve exploration efficiency
+    sampler.stepsampler = SliceSampler(
+        nsteps=10,
+        generate_direction=generate_region_oriented_direction
+    )
+
+    # run nested sampling
+    result = sampler.run(min_num_live_points=400, dlogz=0.5, frac_remain=1e-8, max_iters=40000)
+    sampler.print_results()
+
+    samples = result['samples']
+
+    best_fit_params = np.mean(samples, axis=0)
+    std = np.std(samples, axis=0)
+
+    # Get best-fit model flux for plotting
+    best_model = get_model_flux(best_fit_params)
+
+    print("\nBest-fit parameters:")
+    print("\nPosterior mean ± std:")
+    for i, name in enumerate(param_names):
+        print(f"{name} ± σ: {best_fit_params[i]:.3f} ± {std[i]:.3f}")
+    # Save results
+    np.savez_compressed(os.path.join(result_folder, f"fit_results_ultranest_i{inclination}.npz"),
+                        best_fit_params=best_fit_params,
+                        param_names=param_names,
+                        sigmas=std,
+                        best_model=best_model,
+                        samples=samples,
+                        ultranest_result=result)
+
+else:
+    print("'perform_fit' is False: reading file.")
+
+    fit_results = np.load(os.path.join(result_folder, f"fit_results_ultranest_i{inclination}.npz"))
+    best_fit_params = fit_results["best_fit_params"]
+    std = fit_results["std"]
+    best_model = fit_results["best_model"]
+    param_names = fit_results["param_names"]
+    samples = fit_results["samples"]
+
+    print("\nBest-fit parameters:")
+    print("\nPosterior mean ± std:")
+    for i, name in param_names:
+        print(f"{name} ± σ: {best_fit_params[i]:.3f} ± {std[i]:.3f}")
+
+# Plot the fit
+
+fig = corner.corner(samples, labels=param_names,
+                    truths=best_fit_params, show_titles=True, title_fmt='.5f', title_kwargs={"fontsize": 12})
+plt.savefig(os.path.join(result_folder, f'corner_plot_ultranest_i{inclination}.png'),
+            format='png', dpi=300, bbox_inches='tight')
+plt.show()
+
+resi = best_model - foldy
+binsize = 50
+binned_residuals, res_err = utils.bin_data(resi, binsize, err=None)
+binned_time, time_err = utils.bin_data(phase_obs, binsize, err=None)
+binned_flux, binned_err = utils.bin_data(foldy, binsize, err=yerr)
+bin_time = utils.compute_binning_time(time_array, binsize)
+
+fig, ax = plt.subplots(2, 1, figsize=(7, 6), gridspec_kw={'height_ratios': [3, 1]}, sharex=True, dpi=100)
+ax[0].plot(phase_obs / 360, best_model, color=colors_matter[3], linewidth=1.3, zorder=3, alpha=1)
+ax[0].errorbar(phase_obs / 360, foldy, yerr=yerr, linestyle=' ', fmt='.',
+               color='lightgrey', zorder=1,
+               alpha=0.5)
+ax[0].errorbar(binned_time / 360, binned_flux, yerr=binned_err, linestyle=' ', fmt='.',
+               color=colors_matter[1], zorder=2,
+               alpha=0.7)
+ax[0].set_ylabel('Normalised lightcurve [ppm]')
+full_data_label = lines.Line2D([], [], color='lightgrey',
+                         markersize=3, marker='.', label='full data')
+fit_label = lines.Line2D([], [], color=colors_matter[3],
+                          markersize=3, label=f'best fit model (i = {inclination}$^\circ$)')
+binned_data_label = lines.Line2D([], [], color=colors_matter[1],
+                          markersize=3, label=f'{int(np.round(bin_time, 0))} day binned data')
+ax[0].legend(handles=[full_data_label, fit_label, binned_data_label], fontsize=13, loc="upper right")
+ax[0].set_xlim(0, 1)
+
+ax[1].scatter(phase_obs / 360, resi,
+              alpha=0.5, color='lightgrey', s=8, marker='o')
+ax[1].scatter(binned_time / 360, binned_residuals,
+              alpha=0.7, color=colors_matter[1], s=8, marker='o')
+ax[1].axhline(y=0, xmin=0, xmax=360, linewidth=1.3, color=colors_matter[3])
+ax[1].set_xlabel('Orbital phase')  # Time [day]
+ax[1].set_ylabel('Residuals [ppm]')
+ax[1].set_xlim(0, 1)
+plt.tight_layout()
+plt.savefig(os.path.join(result_folder, f'best_fit_ultranest_i{inclination}.png'),  format='png', dpi=300,
+            bbox_inches='tight')
+plt.show()
+
+
+print('done')
+
+
+
+
+
+
