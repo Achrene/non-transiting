@@ -26,7 +26,6 @@ rc('mathtext', fontset = 'cm')
 colors_matter = cm.cm.matter_r(np.linspace(0,8,10))
 
 
-
 @contextmanager
 def tqdm_joblib(tqdm_object):
     from joblib import parallel
@@ -43,11 +42,9 @@ def tqdm_joblib(tqdm_object):
         tqdm_object.close()
 
 
-
 ROOT = Path(__file__).resolve().parent
 references_path = str(ROOT.parent / "references")
 model_grid_folder = str(ROOT.parent / "results_model")
-model_name = 'model_grid_phase_offset_cloud_offset_test_TESS'
 
 mission = 'TESS'
 if mission == 'Kepler':
@@ -58,6 +55,7 @@ if mission == 'TESS':
 plot_grid = True
 create_grid = True
 use_uniform_albedo = True
+checking = False
 
 #  inputs
 targetname = '9139163'
@@ -72,9 +70,7 @@ stellarmass = 1.390
 stellarradius = 1.558
 internaltemperature = 100 #K
 
-
 reflection_mode = "global"
-checking = False
 
 if reflection_mode in ["global", "grid"]:
     pass
@@ -82,7 +78,7 @@ else:
     print(f'Reflection mode should be "global" or "grid".')
     sys.exit()
 
-
+model_name = f'model_grid_{reflection_mode}_reflection_mode_{mission}'
 
 if create_grid:
     if os.path.exists(os.path.join(model_grid_folder, f'{model_name}.npz')):
@@ -107,7 +103,7 @@ if create_grid:
         albedo_min = None
     else:
         albedo_min = np.linspace(0.05, 0.5, 5)
-    cloud_offset = np.linspace(0, 90, 10)  # degrees
+    cloud_offset = np.linspace(-90, 90, 20)  # degrees
 
     # creating the grid of model
     def run_model(planetaryradius, albedo, redistribution, inclination, albedo_min, cloud_offset, mission,
@@ -291,7 +287,8 @@ if plot_grid is True:
         ax.set_xlabel(r'Phase [$^{\circ}$]')
         ax.set_ylabel(r'Planet-star contrast $F_p / F_{\star} \times 10^6$ [ppm]')
         plt.tight_layout()
-        plt.savefig(os.path.join(model_grid_folder, f'{model_name}.png'),  format='png', dpi=100, bbox_inches='tight')
+        plt.savefig(os.path.join(model_grid_folder, f'{model_name}.png'),
+                    format='png', dpi=100, bbox_inches='tight')
         plt.show()
 
 

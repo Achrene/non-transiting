@@ -572,6 +572,7 @@ def compute_intensities(response_nu, response_vals, wavearray, atmospherictemper
 
 def compute_phasecurve(longitudearray, latitudearray, phase, reflectedplanetartintensity, totalplanetartintensity,
                        area, emittedplanetaryintensity, inclination, checking=False):
+    # Phase is radian
 
     nlon = len(longitudearray)
     nlat = len(latitudearray)
@@ -579,7 +580,6 @@ def compute_phasecurve(longitudearray, latitudearray, phase, reflectedplanetarti
     observedlatitude = 90. - inclination
     observedlatitude = convert_deg_to_radian(observedlatitude)
 
-    phase = convert_deg_to_radian(phase)
     nphase = len(phase)
 
     fobs = np.zeros(nphase)
@@ -632,6 +632,7 @@ def compute_phasecurve(longitudearray, latitudearray, phase, reflectedplanetarti
 def compute_contrast(phase, wavearray, effectivetemperature, response_nu, response_vals, planetaryradius,
                      stellarradius, longitudearray, latitudearray, internaltemperature, redistribution, semimajoraxis,
                      albedo, cloud_offset, area, inclination, albedo_min, reflection_mode, checking=False):
+    # phase in degrees
 
     atmospherictemperature = compute_temperature(longitudearray, latitudearray, internaltemperature, redistribution,
                                       effectivetemperature,
@@ -646,12 +647,11 @@ def compute_contrast(phase, wavearray, effectivetemperature, response_nu, respon
                         stellarradius, semimajoraxis, longitudearray, latitudearray, area, planetaryradius,
                         albedo, albedo_min, cloud_offset, checking, reflection_mode))
 
-
+    # from now on, we need the phase in radian
+    phase = convert_deg_to_radian(phase)
     fobs, fobs_refl, fem = compute_phasecurve(longitudearray, latitudearray, phase,
                                               reflectedplanetartintensity, totalplanetartintensity,
                        area, emittedplanetaryintensity, inclination, checking=checking)
-
-    phase = convert_deg_to_radian(phase)
 
     # Integrated stellar flux in Kepler bandpass
     Bnu_integrated_star = compute_Planck_law(nu_edges=wavearray, temperature=effectivetemperature,
@@ -720,7 +720,7 @@ if test:
         effectivetemperature = 6358
         stellarmass = 1.390
         stellarradius = 1.558
-        cloud_offset = 120
+        cloud_offset = 0
         internaltemperature=100
         mission='TESS'
         if mission == 'Kepler':
