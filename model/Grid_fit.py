@@ -39,6 +39,7 @@ colors_matter = cm.cm.matter_r(np.linspace(0,3,10))
 @dataclass
 class FitConfiguration:
     use_uniform_albedo: bool
+    fit_dataset: str
     fit_inclination: bool
     fit_gravitational_effects: bool
     add_gravitational_model: bool
@@ -51,6 +52,7 @@ class FitConfiguration:
     planetarymasssini: float
     fitting_method: str
     yerr: Optional[np.ndarray] = None
+
 
 
 
@@ -384,12 +386,20 @@ def load_model_grid(grid_folder, grid_filename):
     return grid, metadata
 
 
-def build_output_folder(config: FitConfiguration, model_name: str, root_out: Path):
+def build_output_folder(config: FitConfiguration, root_out: Path):
     """
     Build a fully descriptive folder name based on all fitting choices.
     Example:
-        fit_target9139163__model_phaseoffset__i_fixed17__albedo_uniform__gravity_fixed
+        target9139163__i_fixed17__albedo_uniform__gravity_fixed
     """
+
+    # model
+    if config.fit_dataset == 'TESS':
+        datasets = 'TESS'
+    elif config.fit_dataset == 'Kepler':
+        datasets = 'Kepler'
+    elif config.fit_dataset == 'Both':
+        datasets = 'joint-fit'
 
     # incl
     if config.fit_inclination:
@@ -418,7 +428,7 @@ def build_output_folder(config: FitConfiguration, model_name: str, root_out: Pat
     # t0_name = 't05sigma'
     # t0_name = 't0'
 
-    folder_name = "__".join([target_label, inc_label, alb_label, grav_label, method])
+    folder_name = "__".join([target_label, datasets, inc_label, alb_label, grav_label, method])
 
     out_folder = root_out / folder_name
 
@@ -552,6 +562,7 @@ def try_load_previous_fit(out_folder):
     )
 
 
+
 def main():
     ROOT = Path(__file__).resolve().parent
     if path_exists(ROOT.parent / "model"/ "fit_parameters.yaml"):
@@ -580,85 +591,99 @@ def main():
         stellarradius=cfg.stellar.radius,
         planetarymasssini=cfg.target.planetarymasssini,
         target=cfg.target.name,
-        fitting_method = cfg.fitting.fitting_method
+        fitting_method = cfg.fitting.fitting_method,
+        fit_dataset = cfg.fitting.fit_dataset
     )
-    # Load grid
-    grid_folder = ROOT.parent / cfg.model.folder
-    grid_filename = cfg.model.filename
+
+    # Load grid_Kepler
+    grid_folder_K = ROOT.parent / cfg.model.folder_Kepler
+    grid_filename_K = cfg.model.filename_Kepler
+
+    # Load grid_TESS
+    grid_folder_T = ROOT.parent / cfg.model.folder_TESS
+    grid_filename_T = cfg.model.filename_TESS
 
     output_root = ROOT.parent / cfg.output.root_folder
-    out_folder, existed = build_output_folder(config, grid_filename, output_root)
+    out_folder, existed = build_output_folder(config, output_root)
 
-    grid, metadata = load_model_grid(grid_folder, grid_filename)
+    if config.fit_dataset=="Both":
+        grid_K, metadata_K = load_model_grid(grid_folder_K, grid_filename_K)
+        grid_T, metadata_T = load_model_grid(grid_folder_T, grid_filename_T)
 
-    grid_axes = {
-        "Planetary Radius": grid["planetaryradius"],
-        "Albedo": grid["albedo"],
-        "Redistribution": grid["redistribution"],
-        "Inclination": np.asarray(grid["inclination"]),
-        "Cloud offset": np.asarray(grid["cloud_offset"])
+    elif config.fit_dataset=="Kepler":
+        grid_K, metadata_K = load_model_grid(grid_folder_K, grid_filename_K)
+
+    elif config.fit_dataset=="TESS":
+        grid_T, metadata_T = load_model_grid(grid_folder_T, grid_filename_T)
+
+    grid_axes_K = {
+        "Planetary Radius": grid_K["planetaryradius"],
+        "Albedo": grid_K["albedo"],
+        "Redistribution": grid_K["redistribution"],
+        "Inclination": np.asarray(grid_K["inclination"]),
+        "Cloud offset": np.asarray(grid_K["cloud_offset"])
     }
 
     if not config.use_uniform_albedo:
-        grid_axes["Albedo min"] = np.asarray(grid["albedo_min"])
-        grid_axes["Cloud offset"] = np.asarray(grid["cloud_offset"])
+        grid_axes_K["Albedo min"] = np.asarray(grid_K["albedo_min"])
+        grid_axes_K["Cloud offset"] = np.asarray(grid_K["cloud_offset"])
 
     # Drop unused inclinations
-    normalized_flux = grid["flux"]
+    normalized_flux_K = grid_K["flux"]
 
-    print(f'Inclination values in the grid: {grid_axes["Inclination"]}')
+    print(f'Inclination values in the grid_K: {grid_axes_K["Inclination"]}')
 
     if not config.fit_inclination:
         incl = config.fixed_inclination
-        idx = np.nanargmin(np.abs(grid_axes["Inclination"] - incl))
+        idx = np.nanargmin(np.abs(grid_axes_K["Inclination"] - incl))
         # removing inclination and albedo_min from normalized flux to allow interpolation
         if config.use_uniform_albedo:
-            normalized_flux = normalized_flux[:, :, :, idx, 0, :, :]
+            normalized_flux_K = normalized_flux_K[:, :, :, idx, 0, :, :]
         else:
-            normalized_flux = normalized_flux[:, :, :, idx, :, :, :]
-        grid_axes.pop("Inclination")
+            normalized_flux_K = normalized_flux_K[:, :, :, idx, :, :, :]
+        grid_axes_K.pop("Inclination")
         #grid_axes.pop("Cloud offset")
     else:
         if config.use_uniform_albedo:
-            normalized_flux = normalized_flux[:, :, :, :, 0, :, :]
+            normalized_flux_K = normalized_flux_K[:, :, :, :, 0, :, :]
         else:
-            normalized_flux = normalized_flux[:, :, :, :, :, :, :]
+            normalized_flux_K = normalized_flux_K[:, :, :, :, :, :, :]
 
-    print("normalized_flux.shape before:", normalized_flux.shape)
-    for k,v in grid_axes.items():
+    print("normalized_flux.shape before:", normalized_flux_K.shape)
+    for k,v in grid_axes_K.items():
         print(k, len(v))
     # After slicing:
-    print("normalized_flux.shape after:", normalized_flux.shape)
+    print("normalized_flux.shape after:", normalized_flux_K.shape)
     #assert normalized_flux.ndim == len(grid_axes) - (0 if config.fit_inclination else 1), "Dimension mismatch"
-    
-    interpolator = RegularGridInterpolator(
-        tuple(grid_axes.values()), normalized_flux,
+
+    interpolator_K = RegularGridInterpolator(
+        tuple(grid_axes_K.values()), normalized_flux_K,
         bounds_error=False, fill_value=np.nan
     )
 
-    # Load photometry data
-    if path_exists(references_path / cfg.data.filename):
-        data = np.loadtxt(references_path / cfg.data.filename)
+    # Load photometry data_K
+    if path_exists(references_path / cfg.data.filename_Kepler):
+        data_K = np.loadtxt(references_path / cfg.data.filename_Kepler)
     else:
-        print('Cannot locate data file. Change configuration file.')
+        print('Cannot locate the Kepler data file. Change configuration file.')
         sys.exit()
 
-    time_array, y = data[:, 0], data[:, 1]
+    time_array_K, y_K = data_K[:, 0], data_K[:, 1]
 
-    # Phase-fold data
+    # Phase-fold data_K
     tsup_RV = cfg.data.tsup_RV # time of superior conjunction
-    t0_Kepler = cfg.data.t0_photometry # first time stamps in Kepler time array
-    time_abs = time_array + t0_Kepler
+    t0_K = cfg.data.T0_Kepler # first time stamps in Kepler time array
+    time_abs_K = time_array_K + t0_K
 
-    foldx, foldy = utils.phase_fold(time_abs, y, config.period, tsup_RV)
+    foldx_K, foldy_K = utils.phase_fold(time_abs_K, y_K, config.period, tsup_RV)
 
-    phase_obs = ((time_array - tsup_RV) / config.period % 1.0) * 360
+    phase_obs_K = ((time_abs_K - tsup_RV) / config.period % 1.0) * 360
 
-    # Uncertainties
+    # Kepler Uncertainties
     ref_table = pd.read_csv(os.path.join(references_path,  "t0_estimation.csv"))
     target = ref_table.loc[ref_table['KIC'] == int(config.target)]
-    yerr = np.repeat(np.asarray(target['noise_jenkins'])[0], len(y))
-    config.yerr = yerr
+    yerr_K = np.repeat(np.asarray(target['noise_jenkins'])[0], len(y_K))
+    config.yerr = yerr_K
 
     phase_model = np.linspace(0, 360, 100)
 
@@ -673,19 +698,19 @@ def main():
 
             if cfg.fitting.fitting_method == 'LS':
                 print('Fitting method is Least Square.')
-                best, best_model, sigmas, param_name, param_bounds = run_fit_least_square(config, grid_axes,
-                                                                                  interpolator, phase_model,
-                                                                                  foldx, foldy, phase_obs,
-                                                                                  yerr,
-                                                                                  output_folder=out_folder)
+                best, best_model, sigmas, param_name, param_bounds = run_fit_least_square(config, grid_axes_K,
+                                                                                          interpolator_K, phase_model,
+                                                                                          foldx_K, foldy_K, phase_obs_K,
+                                                                                          yerr_K,
+                                                                                          output_folder=out_folder)
 
             elif cfg.fitting.fitting_method == 'NS':
                 print('Fitting method is Nested Sampling.')
-                best, sigma, best_model, samples, param_name, param_bounds = run_fit_ultranest(config, grid_axes,
-                                            interpolator, phase_model,
-                                            foldx, foldy, phase_obs,
-                                            yerr,
-                                            output_folder=out_folder)
+                best, sigma, best_model, samples, param_name, param_bounds = run_fit_ultranest(config, grid_axes_K,
+                                                                                               interpolator_K, phase_model,
+                                                                                               foldx_K, foldy_K, phase_obs_K,
+                                                                                               yerr_K,
+                                                                                               output_folder=out_folder)
             else:
                 print('Fitting method is not recognized. Please change it.')
                 sys.exit()
@@ -693,24 +718,24 @@ def main():
     else:
         if cfg.fitting.fitting_method == 'LS':
             print('Fitting method is Least Square.')
-            best, best_model, sigmas, param_name, param_bounds = run_fit_least_square(config, grid_axes,
-                                                                              interpolator, phase_model,
-                                                                              foldx, foldy, phase_obs,
-                                                                              yerr,
-                                                                              output_folder=out_folder)
+            best, best_model, sigmas, param_name, param_bounds = run_fit_least_square(config, grid_axes_K,
+                                                                                      interpolator_K, phase_model,
+                                                                                      foldx_K, foldy_K, phase_obs_K,
+                                                                                      yerr_K,
+                                                                                      output_folder=out_folder)
 
         elif cfg.fitting.fitting_method == 'NS':
             print('Fitting method is Nested Sampling.')
-            best, sigma, best_model, samples, param_name, param_bounds = run_fit_ultranest(config, grid_axes,
-                                                                                           interpolator, phase_model,
-                                                                                           foldx, foldy, phase_obs,
-                                                                                           yerr,
+            best, sigma, best_model, samples, param_name, param_bounds = run_fit_ultranest(config, grid_axes_K,
+                                                                                           interpolator_K, phase_model,
+                                                                                           foldx_K, foldy_K, phase_obs_K,
+                                                                                           yerr_K,
                                                                                            output_folder=out_folder)
         else:
             print('Fitting method is not recognized. Please change it.')
             sys.exit()
 
-    plot_fit(foldx, time_array, foldy, phase_obs, yerr, phase_model, best_model, out_folder)
+    plot_fit(foldx_K, time_array_K, foldy_K, phase_obs_K, yerr_K, phase_model, best_model, out_folder)
 
     saved_parfile = save_parfile_to_output(parfile_path, out_folder)
     print(f"Stored parfile at: {saved_parfile}")

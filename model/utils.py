@@ -19,7 +19,7 @@ def phase_fold(x, y, period, t0):
     df = pd.DataFrame(np.column_stack((x, y)), columns=['t', 'f'])
 
     # t0 = df['t'][0]
-    df['p'] = (df['t'] - t0) % period - 0.5 * period
+    df['p'] = (df['t'] - t0) % period #- 0.5 * period
 
     df = df.sort_values(by='p').reset_index(drop=True)
 

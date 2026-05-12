@@ -18,25 +18,30 @@ stellar:
 # Model grid being used
 # -------------------------
 model:
-  folder: "results_model/phase_offset"
-  filename: "model_grid_phase_offset_cloud_offset"
+  folder_Kepler: "results_model/"
+  filename_Kepler: "model_grid_global_reflection_mode_Kepler"
+  folder_TESS: "results_model/"
+  filename_TESS: "model_grid_global_reflection_mode_TESS"
 
 data:
-  filename: "9139163_lc_filtered.txt"
-  tsup_RV: 2459664.752 # BJD_TDB
-  t0_photometry: 2454953.5394706232  # BJD_TDB
+  filename_Kepler: "9139163_lc_filtered.txt"
+  t0_Kepler: 2454953.5394706232  # BJD_TDB
+  filename_TESS: "Cleaned_TIC_164670309_1800s_regularly_sampled_1day_filtered_all_sector.data"
+  t0_TESS: 2457000 # BJD_TDB
+  tinf_RV: 2459664.753 # BJD_TDB, time of inferior conjunction
 
 
 # -------------------------
 # Fitting options
 # -------------------------
 fitting:
-  fitting_method: "LS" # Least square "LS" or Nested Sampling "NS"
+  fit_dataset: "Both"  # TESS, Kepler or Both
+  fitting_method: "NS" # Least square "LS" or Nested Sampling "NS"
   use_uniform_albedo: true  # reflection will be centered on phase 0.5
 
   # Inclination options
-  fit_inclination: false
-  fixed_inclination: 62 # 17 28.25 39.5  50.75 62. degrees
+  fit_inclination: True
+  fixed_inclination: None # 17 28.25 39.5  50.75 62. degrees
 
   # Gravity options
   fit_gravitational_effects: false  # Gravitational effects (Doppler beaming, Ellipsoidal distortion) are fitted

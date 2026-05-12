@@ -1,6 +1,6 @@
 archive/
 
-results_grid/
+archive/results_grid/
 
 fit/*
 !fit/.gitkeep

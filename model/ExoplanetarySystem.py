@@ -206,7 +206,7 @@ def albedo_map(lon_array, albedo, albedo_min, cloud_offset):
     return A_min + (A_max - A_min) * np.exp(-delta ** 2 / (2 * sigma ** 2))
 
 def plot_albedo_map(longitudearray, A_lon):
-    fig, ax = plt.subplots(1, 1, figsize=(7, 4), dpi=100)
+    fig, ax = plt.subplots(1, 1, figsize=(7, 4), dpi=300)
     ax.plot(longitudearray * 180/np.pi, A_lon, color='green', linewidth=2)
     ax.axhline(A_lon[A_lon.shape[0]//2], color='lightpink', linestyle='--', linewidth=1)
     ax.axvline(0, color='lightgrey', linestyle='--', linewidth=1)
@@ -216,7 +216,9 @@ def plot_albedo_map(longitudearray, A_lon):
     plt.tight_layout()
     plt.show()
 
-def plot_reflected_radiance(longitudearray, latitudearray, reflectedplanetartintensity, reflection_mode):
+def plot_reflected_radiance(longitudearray, latitudearray, reflectedplanetartintensity, earth_reflective_radiance,
+                            semimajoraxis,
+                            reflection_mode):
     class HandlerCircle(HandlerPatch):
         def create_artists(self, legend, orig_handle,
                            xdescent, ydescent, width, height, fontsize, trans):
@@ -227,6 +229,7 @@ def plot_reflected_radiance(longitudearray, latitudearray, reflectedplanetartint
             p.set_transform(trans)
             return [p]
 
+    plt.figure(dpi=300)
     m = Basemap(projection='mbtfpq', lon_0=0, resolution='c')
     # draw parallels and meridians.
     m.drawparallels(np.arange(-90., 120., 20.))
@@ -243,10 +246,12 @@ def plot_reflected_radiance(longitudearray, latitudearray, reflectedplanetartint
 
     # Create meshgrid of edges
     lons, lats = np.meshgrid(lon_edges, lat_edges)
+    sma_scaling = (1/(semimajoraxis * 6.68459e-12))**2  # converting thr semi major axis in AU
+    earth_scaling_factor = earth_reflective_radiance *  sma_scaling
 
-    im1 = m.pcolormesh(lons, lats, reflectedplanetartintensity, cmap=cm.cm.matter_r, latlon=True, shading='auto')
+    im1 = m.pcolormesh(lons, lats, reflectedplanetartintensity/earth_scaling_factor, cmap=cm.cm.matter_r, latlon=True, shading='auto')
     cb = m.colorbar(im1, "bottom", size="5%", pad="2%")
-    cb.set_label(r'Reflected radiance $\mathcal{I}_{\rm refl}$ [W m$^2$ sr$^{-1}$]', fontsize=12)
+    cb.set_label(r'Intrinsic reflected radiance $\mathcal{I}_{\rm refl}$ [$\mathcal{I}_{\oplus}$]', fontsize=12) #[W m$^2$ sr$^{-1}$]
 
     lon_labels = [lon_edges[0], lon_edges[len(lon_edges) // 2], lon_edges[-1]]
     for lon in lon_labels:
@@ -425,7 +430,7 @@ def plot_thermal_phase_array(longitudearray, redistribution):
 
     P, P_lon = make_thermal_phase_array(longitudearray, redistribution)
 
-    fig, ax = plt.subplots(1, 1, figsize=(7, 4), dpi=100)
+    fig, ax = plt.subplots(1, 1, figsize=(7, 4), dpi=300)
     ax.plot(xi * 180 / np.pi, P, color='orange', linewidth=2)
     ax.axvline(0, color='lightgrey', linestyle='--', linewidth=1)
     ax.set_xlabel(r'Longitude $\mathcal{\xi}$ [$^{\circ}$]')
@@ -434,7 +439,7 @@ def plot_thermal_phase_array(longitudearray, redistribution):
     plt.tight_layout()
     plt.show()
 
-    fig, ax = plt.subplots(1, 1, figsize=(7, 4), dpi=100)
+    fig, ax = plt.subplots(1, 1, figsize=(7, 4), dpi=300)
     ax.plot(longitudearray * 180 / np.pi, P_lon, color='orange', linewidth=2)
     ax.axvline(0, color='lightgrey', linestyle='--', linewidth=1)
     ax.set_xlabel(r'Longitude $\mathcal{\Phi}$ [$^{\circ}$]')
@@ -445,7 +450,7 @@ def plot_thermal_phase_array(longitudearray, redistribution):
 
 
 def plot_contrast(phase, contrast_ppm_refl, contrast_ppm, contrast_ppm_em):
-    fig, ax = plt.subplots(1, 1, figsize=(7, 4), dpi=100)
+    fig, ax = plt.subplots(1, 1, figsize=(7, 4), dpi=300)
     ax.plot(phase * 180 / np.pi,
             contrast_ppm_refl, color='lightblue', linewidth=2, label='Reflection')
     ax.plot(phase * 180 / np.pi,
@@ -482,6 +487,7 @@ def compute_temperature(longitudearray, latitudearray, internaltemperature, redi
     # albedo
     A_lon = albedo_map(longitudearray, albedo, albedo_min, cloud_offset)
     P, P_lon = make_thermal_phase_array(longitudearray, redistribution)
+    plot_thermal_phase_array(longitudearray, redistribution)
 
     # getting the cosine of latitudes
     coslat_1D = np.cos(latitudearray[:])
@@ -495,12 +501,12 @@ def compute_temperature(longitudearray, latitudearray, internaltemperature, redi
         atmospherictemperature[:, ilon] = ((P_lon[ilon] * T_0  * coslat_1D ** 0.25) ** 4
                                                 + internaltemperature ** 4) ** 0.25
 
-
+    plot_temperature_map(longitudearray, latitudearray, atmospherictemperature)
     return atmospherictemperature
 
 def compute_intensities(response_nu, response_vals, wavearray, atmospherictemperature, effectivetemperature,
                         stellarradius, semimajoraxis, longitudearray, latitudearray, area, planetaryradius,
-                        albedo, albedo_min, cloud_offset, checking=False, reflection_mode="global"):
+                        albedo, albedo_min, cloud_offset, earth_reflective_radiance, checking=False, reflection_mode="global"):
     """
        ``reflection_mode`` can be either ``"global"`` or ``"grid``"
     """
@@ -564,7 +570,9 @@ def compute_intensities(response_nu, response_vals, wavearray, atmospherictemper
     totalplanetartintensity = reflectedplanetartintensity + emittedplanetaryintensity
 
     if checking:
-        plot_reflected_radiance(longitudearray, latitudearray, reflectedplanetartintensity, reflection_mode)
+        plot_reflected_radiance(longitudearray, latitudearray, reflectedplanetartintensity, earth_reflective_radiance,
+                                semimajoraxis,
+                                reflection_mode)
         check_intensities_units(totalplanetartintensity, area, planetaryradius)
 
 
@@ -613,7 +621,7 @@ def compute_phasecurve(longitudearray, latitudearray, phase, reflectedplanetarti
         fobs_em[iphase] = np.sum(emittedplanetaryintensity[visible] * area[visible] * cos_theta[visible])
 
     if checking:
-        fig, ax = plt.subplots(1, 1, figsize=(7, 4), dpi=100)
+        fig, ax = plt.subplots(1, 1, figsize=(7, 4), dpi=300)
         ax.plot(phase * 180 / np.pi, fobs_em, color='orange',
                 linewidth=2, label=r'Emitted $\mathcal{I}_{\rm R, em}$')
         ax.plot(phase * 180 / np.pi, fobs_refl, color='red',
@@ -631,7 +639,8 @@ def compute_phasecurve(longitudearray, latitudearray, phase, reflectedplanetarti
 
 def compute_contrast(phase, wavearray, effectivetemperature, response_nu, response_vals, planetaryradius,
                      stellarradius, longitudearray, latitudearray, internaltemperature, redistribution, semimajoraxis,
-                     albedo, cloud_offset, area, inclination, albedo_min, reflection_mode, checking=False):
+                     albedo, cloud_offset, area, inclination, albedo_min, reflection_mode, earth_reflective_radiance,
+                     checking=False):
     # phase in degrees
 
     atmospherictemperature = compute_temperature(longitudearray, latitudearray, internaltemperature, redistribution,
@@ -645,7 +654,7 @@ def compute_contrast(phase, wavearray, effectivetemperature, response_nu, respon
     reflectedplanetartintensity, emittedplanetaryintensity, totalplanetartintensity = (
         compute_intensities(response_nu, response_vals, wavearray, atmospherictemperature, effectivetemperature,
                         stellarradius, semimajoraxis, longitudearray, latitudearray, area, planetaryradius,
-                        albedo, albedo_min, cloud_offset, checking, reflection_mode))
+                        albedo, albedo_min, cloud_offset, earth_reflective_radiance, checking, reflection_mode))
 
     # from now on, we need the phase in radian
     phase = convert_deg_to_radian(phase)
@@ -685,7 +694,7 @@ def compute_contrast(phase, wavearray, effectivetemperature, response_nu, respon
 
 def compute_flux(phase, wavearray, effectivetemperature, semimajoraxis, mission, planetaryradius,
                      stellarradius, internaltemperature, redistribution,
-                     albedo, cloud_offset, inclination, albedo_min, reflection_mode, checking=False):
+                     albedo, cloud_offset, inclination, albedo_min, reflection_mode, earth_reflective_radiance, checking=False):
     wavearray = convert_mu_to_cm(wavearray)
 
     response_nu, response_vals = read_response_function(mission)
@@ -695,7 +704,8 @@ def compute_flux(phase, wavearray, effectivetemperature, semimajoraxis, mission,
 
     contrast = compute_contrast(phase, wavearray, effectivetemperature, response_nu, response_vals, planetaryradius,
                      stellarradius, longitudearray, latitudearray, internaltemperature, redistribution, semimajoraxis,
-                     albedo, cloud_offset, area, inclination, albedo_min, reflection_mode, checking=checking)
+                     albedo, cloud_offset, area, inclination, albedo_min, reflection_mode, earth_reflective_radiance,
+                                checking=checking)
 
     return contrast
 
@@ -705,28 +715,30 @@ if test:
 
     def run_model():
         #  inputs
-        planetaryradius = 0.22  # Jup radius
-        albedo = 0.7
-        albedo_min = 0.7
-        redistribution = 0.05
+        planetaryradius = 0.2168  # Jup radius
+        albedo = 0.56 # 0.749
+        albedo_min = 0.56 # 0.749
+        redistribution = 0.16 # 0.52
 
         targetname = '9139163'
         period = 0.604734  # in days
         nphase = 100  # discretization of phases
         phase_model = np.linspace(0, 360., nphase)
-        planetarymasssini = 11.4  # Earth mass, from RV fit
+        planetarymasssini = 8.4  # Earth mass, from RV fit
         planetarymasssini = planetarymasssini * 0.00314558  # conversion into Jupiter mass
-        inclination = 62  # degrees
+        inclination = 59.7  # degrees
         effectivetemperature = 6358
         stellarmass = 1.390
         stellarradius = 1.558
-        cloud_offset = 0
+        cloud_offset = 86.4 # -62
         internaltemperature=100
-        mission='TESS'
+        mission='Kepler'
         if mission == 'Kepler':
-            wavearray = np.array([0.430, 0.890])  # Kepler bandpass in micron
+            wavearray = np.array([0.430, 0.890]) # Kepler bandpass in micron
+            earth_reflective_radiance = 90 # W/m2/sr
         if mission == 'TESS':
             wavearray = np.array([0.6, 1])  # TESS bandpass in micron
+            earth_reflective_radiance = 60  # W/m2/sr
         reflection_mode = "global"
         checking = True
 
@@ -755,7 +767,10 @@ if test:
                      planetaryradius=planetaryradius,
                     stellarradius=stellarradius, internaltemperature=internaltemperature,
                      redistribution=redistribution, albedo=albedo, cloud_offset=cloud_offset,
-                     inclination=inclination, albedo_min=albedo_min, reflection_mode=reflection_mode, checking=checking)
+                     inclination=inclination, albedo_min=albedo_min, reflection_mode=reflection_mode,
+                                earth_reflective_radiance=earth_reflective_radiance,
+                                checking=checking
+                               )
 
 
 
