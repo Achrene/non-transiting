@@ -1,204 +1,95 @@
-````markdown
 # Non-transiting
 
-A Python package for modelling, generating and fitting optical phase curves of non-transiting exoplanets.
+A Python package for modelling and fitting optical phase curves of non-transiting exoplanets.
 
-This repository provides tools to compute physically motivated phase curves of non-transiting exoplanets, generate multidimensional model grids, and fit observed photometric phase curves through least-squares or Bayesian inference.
+`non-transiting` computes synthetic phase curves including planetary reflection, thermal emission, Doppler beaming and stellar ellipsoidal distortion. The package can generate multidimensional grids of models for rapid parameter inference or compute individual phase curves using more detailed reflection prescriptions.
 
 The code was developed for the analysis presented in
 
 > Breton et al. (2026), *Hidden worlds: a non-transiting candidate planet in the Neptunian desert around the solar-type pulsator KIC 9139163*.
 
----
-
-## Features
-
-- Compute optical phase curves of non-transiting exoplanets
-- Generate multidimensional grids of synthetic phase curves
-- Fit observed phase curves using least-squares or nested sampling
-- Includes the contributions from
-  - Planetary reflection
-  - Thermal emission
-  - Doppler beaming
-  - Stellar ellipsoidal distortion
-- Supports **Kepler** and **TESS** instrumental response functions
-- Parallel grid generation using `joblib`
-- Publication-quality diagnostic plots
-
----
-
 ## Reflection models
 
-Two different reflection prescriptions are implemented.
+Two reflection models are available.
 
 ### Global reflection
 
-The global reflection model assumes a constant geometric albedo over the planetary surface. Reflection is described by
+The global reflection model assumes a constant geometric albedo over the planetary surface. Reflection is controlled by
 
-- Geometric albedo
-- Heat redistribution factor
-- Cloud offset
+* geometric albedo,
+* heat redistribution factor,
+* cloud offset.
 
-The cloud-offset parameter shifts the longitude of maximum reflected flux, allowing asymmetric and non-Lambertian phase curves while remaining computationally efficient.
-
-This reflection prescription is used to generate the multidimensional model grids published alongside the paper.
+The cloud offset shifts the longitude of maximum reflected flux, allowing asymmetric phase curves that approximate non-Lambertian scattering. This prescription is computationally efficient and is used to generate the published model grids.
 
 ### Local reflection
 
-The local reflection model computes the reflected flux by integrating the contribution of individual surface elements whose albedo can vary across the planetary surface. This produces self-consistent phase-dependent reflection patterns and allows longitudinal variations in planetary reflectivity.
+The local reflection model computes the reflected flux by integrating the contribution of individual surface elements with a spatially varying albedo. This allows more realistic phase-dependent brightness distributions and is intended for modelling individual systems.
 
+## Main capabilities
 
----
+The package can
 
-## Repository structure
+* compute synthetic phase curves of non-transiting exoplanets,
+* generate multidimensional model grids,
+* fit observed phase curves using least-squares or nested sampling,
+* model observations in the **Kepler** and **TESS** bandpasses.
 
-```text
-.
-├── model/
-│   ├── ExoplanetarySystem.py      # Physical phase-curve model
-│   ├── create_grid.py             # Generate model grids
-│   ├── Grid_fit.py                # Fit observed phase curves
-│   ├── Grid_fit_for_joint_fit.py  # Joint Kepler + TESS fitting
-│   ├── diagnosis.py               # Diagnostic plots
-│   ├── fit_parameters.yaml        # Fitting configuration
-│   └── utils.py
-│
-├── references/                    # Instrument transmission curves
-├── results_model/                 # Generated model grids
-├── fit/                           # Fitting outputs
-└── README.md
-```
+The total phase curve includes contributions from
 
----
+* reflected light,
+* thermal emission,
+* Doppler beaming,
+* stellar ellipsoidal distortion.
 
-## Installation
-
-Clone the repository
-
-```bash
-git clone https://github.com/Achrene/non-transiting.git
-cd non-transiting
-```
-
-Install the required Python packages
-
-```bash
-pip install numpy scipy matplotlib pandas astropy joblib dynesty pyyaml
-```
-
----
-
-## Computing phase curves
-
-The physical model is implemented in
+## Repository
 
 ```text
-model/ExoplanetarySystem.py
+model/
+    ExoplanetarySystem.py      Core phase-curve model
+    create_grid.py             Grid generation
+    Grid_fit.py                Grid fitting
+    Grid_fit_for_joint_fit.py  Joint Kepler/TESS fitting
+    diagnosis.py               Plotting utilities
+    fit_parameters.yaml        Configuration
+
+references/                    Instrument response functions
+results_model/                 Generated grids
+fit/                           Fitting results
 ```
 
-and computes the total optical phase curve as the sum of
+## Computing model grids
 
-- Reflected planetary light
-- Thermal emission
-- Doppler beaming
-- Stellar ellipsoidal distortion
-
-Both global and local reflection prescriptions are available.
-
----
-
-## Generating model grids
-
-Model grids are generated using
+Model grids are generated with
 
 ```bash
 python model/create_grid.py
 ```
 
-The script computes synthetic phase curves over a multidimensional parameter space and stores the resulting grid together with metadata describing the sampled parameters.
+The published grids are available for both the **Kepler** and **TESS** instrumental bandpasses.
 
-Currently, grids can be generated using either the **Kepler** or **TESS** instrumental transmission curves.
+The default parameter space is
 
----
+| Parameter                     | Range     |
+| ----------------------------- | --------- |
+| Planet radius ($R_{\rm Jup}$) | 0.1–1.0   |
+| Inclination (°)               | 17–62     |
+| Geometric albedo              | 0.05–0.99 |
+| Heat redistribution           | 0.05–0.99 |
+| Cloud offset (°)              | -90–90    |
 
-## Published grids
-
-The published grids span the following parameter space.
-
-| Parameter | Range | Number of values |
-|-----------|------:|-----------------:|
-| Planet radius ($R_{\rm Jup}$) | 0.1–1.0 | 10 |
-| Orbital inclination (°) | 17–62 | 45 |
-| Geometric albedo | 0.05–0.99 | 10 |
-| Heat redistribution factor | 0.05–0.99 | 10 |
-| Cloud offset (°) | -90–90 | 20 |
-
-The inclination range excludes transiting systems (90°), focusing on non-transiting geometries.
-
-These parameter ranges can be modified directly in `create_grid.py` to generate custom grids.
-
----
+The parameter ranges can be modified in `create_grid.py` to generate custom grids.
 
 ## Configuration
 
-The fitting procedure is configured through
+Fitting is controlled through `model/fit_parameters.yaml`, which specifies the stellar and orbital parameters, observational data, optimisation settings and output directories.
 
-```text
-model/fit_parameters.yaml
-```
-
-The configuration file specifies
-
-- Stellar parameters
-- Planetary and orbital parameters
-- Photometric datasets
-- Instrument
-- Model grid location
-- Fitting method
-- Optimisation settings
-- Output directories
-
-Changing this file is generally sufficient to analyse another target once an appropriate model grid has been generated.
-
----
-
-## Output
-
-Generated model grids consist of multidimensional arrays of synthetic phase curves together with metadata describing the parameter space.
-
-The accompanying `.json` files contain
-
-- Parameter names
-- Parameter values
-- Parameter ordering
-- Grid dimensions
-
-These metadata are used during interpolation when fitting observed phase curves.
-
----
-
-## Fitting observations
-
-Observed light curves can be fitted using either
-
-- Least-squares optimisation
-- Bayesian nested sampling (`dynesty`)
-
-The fitting routines interpolate within the pre-computed model grids, allowing efficient exploration of the parameter space without recomputing phase curves at every likelihood evaluation.
-
----
+Metadata describing the generated grids are stored in the accompanying `.json` files, including the parameter names, sampled values and grid dimensions.
 
 ## Citation
 
-If you use this code in your research, please cite
+If you use this package, please cite
 
 > Breton et al. (2026), *Hidden worlds: a non-transiting candidate planet in the Neptunian desert around the solar-type pulsator KIC 9139163*.
 
-If you use the published model grids, please also cite the corresponding Zenodo archive.
-
----
-
-## License
-
-This project is distributed under the terms of the MIT License.
-````
+If you use the published model grids, please also cite the accompanying Zenodo archive.
